@@ -1,0 +1,23 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento-ubuntu-24.04-local"
+  config.vm.box_url = "file:///C:/Users/zazhigina/Downloads/ubuntu-24.04"
+  config.vm.hostname = "zfs-homework"
+
+  config.vm.synced_folder ".", "/vagrant", type: "virtualbox"
+
+  (1..8).each do |i|
+    config.vm.disk :disk, name: "zfs-disk-#{i}", size: "512MB"
+  end
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "zfs-homework"
+    vb.memory = 8192
+    vb.cpus = 2
+    vb.linked_clone = true
+  end
+
+  config.vm.provision "shell", path: "zfs_setup.sh", privileged: true
+end
