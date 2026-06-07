@@ -1,0 +1,17 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento-ubuntu-24.04-local"
+  config.vm.box_url = "file:///C:/Users/zazhigina/Downloads/ubuntu-24.04"
+  config.vm.hostname = "grub-homework"
+
+  config.vm.synced_folder ".", "/vagrant", type: "virtualbox"
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "grub-homework"
+    vb.memory = 8192
+    vb.cpus = 2
+    vb.linked_clone = true
+  end
+end
