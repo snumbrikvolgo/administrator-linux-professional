@@ -1,0 +1,15 @@
+Vagrant.configure("2") do |config|
+  config.vm.box = "almalinux/9"
+  config.vm.box_url = "file:///C:/Users/zazhigina/Downloads/alma-9"
+  config.vm.hostname = "packages"
+
+  config.vm.network "forwarded_port", guest: 80, host: 8080, host_ip: "127.0.0.1"
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "otus-task-10-rpm-repo"
+    vb.cpus = 2
+    vb.memory = 4096
+  end
+
+  config.vm.provision "shell", path: "provision.sh", privileged: true
+end
