@@ -1,0 +1,15 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento-ubuntu-24.04-local"
+  config.vm.box_url = "file:///C:/Users/zazhigina/Downloads/ubuntu-24.04"
+  config.vm.hostname = "vagrant"
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.cpus = 2
+    vb.memory = 2048
+  end
+
+  config.vm.network "forwarded_port", guest: 9001, host: 9001, host_ip: "127.0.0.1"
+end

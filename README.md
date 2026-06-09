@@ -10,3 +10,4 @@
 ## [Задание 6: Сборка RPM-пакета и создание репозитория](./task-6-rpm/README.md)
 ## [Задание 7: Работа с загрузчиком](./task-7-grub/README.md)
 ## [Задание 8: Работа с systemd](./task-8-systemd/README.md)
+## [Задание 9: Работа с Bash](./task-9-bash/README.md)

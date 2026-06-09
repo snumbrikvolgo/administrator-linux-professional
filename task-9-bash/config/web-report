@@ -1,0 +1,11 @@
+MAIL_TO="vagrant"
+MAIL_SUBJECT="Web server hourly report"
+
+LOG_DIR="/var/log/nginx"
+ACCESS_LOG_NAME="web-report-access.log"
+ERROR_LOG_NAME="web-report-error.log"
+
+STATE_FILE="/var/lib/web-report/last_run_epoch"
+LOCK_FILE="/run/web-report.lock"
+
+TOP_N=10
