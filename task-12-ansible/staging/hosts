@@ -1,0 +1,2 @@
+[web]
+nginx ansible_host=192.168.11.150 ansible_user=vagrant ansible_private_key_file=/home/zazhigina/.ssh/vagrant-keys/task-12-ansible/nginx_private_key ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

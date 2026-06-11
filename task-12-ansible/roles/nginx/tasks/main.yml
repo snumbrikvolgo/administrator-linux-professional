@@ -1,0 +1,51 @@
+---
+- name: NGINX | Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - update
+    - nginx
+
+- name: NGINX | Install package
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+  notify:
+    - start nginx
+  tags:
+    - nginx-package
+    - nginx
+
+- name: NGINX | Enable service in systemd
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+  tags:
+    - nginx-service
+    - nginx
+
+- name: NGINX | Create site config from template
+  ansible.builtin.template:
+    src: default.conf.j2
+    dest: /etc/nginx/sites-available/default
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - restart nginx
+  tags:
+    - nginx-configuration
+    - nginx
+
+- name: NGINX | Enable default site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/default
+    dest: /etc/nginx/sites-enabled/default
+    state: link
+    force: true
+  notify:
+    - restart nginx
+  tags:
+    - nginx-configuration
+    - nginx

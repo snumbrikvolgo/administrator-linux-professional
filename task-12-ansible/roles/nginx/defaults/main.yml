@@ -1,0 +1,4 @@
+---
+nginx_listen_port: 8080
+nginx_server_name: "_"
+nginx_root: /var/www/html

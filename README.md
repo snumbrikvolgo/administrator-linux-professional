@@ -12,3 +12,5 @@
 ## [Задание 8: Работа с systemd](./task-8-systemd/README.md)
 ## [Задание 9: Работа с Bash](./task-9-bash/README.md)
 ## [Задание 10: Работа с процессами](./task-10-proc/README.md)
+## [Задание 11: TODO]()
+## [Задание 12: Работа с Ansible](./task-12-ansible/README.md)
