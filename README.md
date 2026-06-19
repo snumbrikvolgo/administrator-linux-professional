@@ -14,3 +14,4 @@
 ## [Задание 10: Работа с процессами](./task-10-proc/README.md)
 ## [Задание 11: TODO]()
 ## [Задание 12: Работа с Ansible](./task-12-ansible/README.md)
+## [Задание 13: Vagrant](./task-13-vagrant/README.md)

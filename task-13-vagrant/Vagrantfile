@@ -1,0 +1,67 @@
+# -*- mode: ruby -*-
+# vim: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.define "task-13-vagrant" do |srv|
+    srv.vm.box = "bento-ubuntu-24.04-local"
+    srv.vm.box_url = "file:///C:/Users/zazhigina/Downloads/ubuntu-24.04"
+    srv.vm.hostname = "task-13-vagrant"
+
+    srv.vm.synced_folder "./", "/vagrant"
+
+    srv.vm.disk :disk, size: "1GB", name: "disk1"
+    srv.vm.disk :disk, size: "1GB", name: "disk2"
+
+    srv.vm.network "forwarded_port", guest: 80, host: 8080, host_ip: "127.0.0.1"
+    srv.vm.network "private_network", ip: "192.168.56.13"
+
+    srv.vm.provider "virtualbox" do |vb|
+      vb.name = "task-13-vagrant"
+      vb.memory = 1024
+      vb.cpus = 1
+    end
+
+    srv.vm.provision "shell", inline: <<-'SHELL'
+      set -e
+
+      export DEBIAN_FRONTEND=noninteractive
+
+      apt-get update
+      apt-get install -y apache2
+
+      mkdir -p /mnt/disk1 /mnt/disk2
+
+      for mapping in "/dev/sdb:/mnt/disk1" "/dev/sdc:/mnt/disk2"; do
+        device="${mapping%%:*}"
+        mount_point="${mapping##*:}"
+
+        if ! blkid "$device" >/dev/null 2>&1; then
+          mkfs.ext4 -F "$device"
+        fi
+
+        uuid="$(blkid -s UUID -o value "$device")"
+        grep -q "$uuid" /etc/fstab || echo "UUID=$uuid $mount_point ext4 defaults,nofail 0 2" >> /etc/fstab
+
+        mountpoint -q "$mount_point" || mount "$mount_point"
+      done
+
+      a2dissite 000-default.conf
+
+      cat <<'EOF' >/etc/apache2/sites-available/vagrant.conf
+      <VirtualHost *:80>
+          DocumentRoot /vagrant
+          <Directory /vagrant>
+              Options Indexes FollowSymLinks
+              AllowOverride All
+              Require all granted
+          </Directory>
+      </VirtualHost>
+      EOF
+
+      a2ensite vagrant.conf
+      a2enmod rewrite
+      systemctl enable apache2
+      systemctl restart apache2
+    SHELL
+  end
+end
