@@ -15,3 +15,4 @@
 ## [Задание 11: TODO]()
 ## [Задание 12: Работа с Ansible](./task-12-ansible/README.md)
 ## [Задание 13: Vagrant](./task-13-vagrant/README.md)
+## [Задание 14: Docker](./task-14-docker/README.md)
