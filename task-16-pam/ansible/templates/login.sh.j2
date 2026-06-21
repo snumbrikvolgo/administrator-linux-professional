@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -u
+
+ADMIN_GROUP="admin"
+HOLIDAYS_FILE="/etc/security/pam_holidays.conf"
+
+login_user="${PAM_USER:-}"
+check_date="${PAM_CHECK_DATE:-$(date +%F)}"
+day_of_week="$(LC_ALL=C date -d "${check_date}" +%a)"
+month_day="$(date -d "${check_date}" +%m-%d)"
+
+if [[ -z "${login_user}" ]]; then
+  exit 1
+fi
+
+if [[ "${day_of_week}" == "Sat" || "${day_of_week}" == "Sun" ]]; then
+  if [[ -f "${HOLIDAYS_FILE}" ]] && tr -d '\r' < "${HOLIDAYS_FILE}" | grep -Ev '^\s*(#|$)' | grep -qx "${month_day}"; then
+    exit 0
+  fi
+
+  if id -nG "${login_user}" | tr ' ' '\n' | grep -qx "${ADMIN_GROUP}"; then
+    exit 0
+  fi
+
+  exit 1
+fi
+
+exit 0

@@ -1,0 +1,74 @@
+---
+- name: Test PAM access rules
+  hosts: all
+  tags:
+    - test
+
+  vars:
+    access_test_cases:
+      - name: Friday ordinary user is allowed
+        user: otus
+        date: "2026-06-19"
+        expected_rc: 0
+      - name: Saturday ordinary user is denied
+        user: otus
+        date: "2026-06-20"
+        expected_rc: 1
+      - name: Sunday ordinary user is denied
+        user: otus
+        date: "2026-06-21"
+        expected_rc: 1
+      - name: Saturday admin user is allowed
+        user: otusadm
+        date: "2026-06-20"
+        expected_rc: 0
+      - name: Holiday Saturday ordinary user is allowed
+        user: otus
+        date: "2028-01-01"
+        expected_rc: 0
+
+  tasks:
+    - name: Run access checks
+      become: true
+      ansible.builtin.command: /usr/local/bin/login.sh
+      environment:
+        PAM_USER: "{{ item.user }}"
+        PAM_CHECK_DATE: "{{ item.date }}"
+      register: access_check
+      failed_when: access_check.rc != item.expected_rc
+      changed_when: false
+      loop: "{{ access_test_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - test
+
+    - name: Check dockeradm can use Docker
+      become: true
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -iu
+          - dockeradm
+          - docker
+          - ps
+      changed_when: false
+      tags:
+        - test
+        - docker
+
+    - name: Check dockeradm can restart Docker service
+      become: true
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -iu
+          - dockeradm
+          - sudo
+          - systemctl
+          - restart
+          - docker.service
+      changed_when: false
+      tags:
+        - test
+        - docker
