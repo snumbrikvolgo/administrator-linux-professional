@@ -1,0 +1,153 @@
+---
+- name: Configure PAM access restrictions
+  hosts: all
+
+  vars:
+    homework_user_password: "Otus2022!"
+    pam_users:
+      - name: otus
+        groups: []
+      - name: otusadm
+        groups:
+          - admin
+      - name: dockeradm
+        groups:
+          - docker
+
+  handlers:
+    - name: restart ssh
+      become: true
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+  tasks:
+    - name: Ensure required packages are installed
+      become: true
+      ansible.builtin.apt:
+        name:
+          - docker.io
+        state: present
+        update_cache: true
+      tags:
+        - packages
+        - docker
+
+    - name: Ensure admin group exists
+      become: true
+      ansible.builtin.group:
+        name: admin
+        state: present
+      tags:
+        - users
+        - pam
+
+    - name: Ensure docker group exists
+      become: true
+      ansible.builtin.group:
+        name: docker
+        state: present
+      tags:
+        - users
+        - docker
+
+    - name: Ensure homework users exist
+      become: true
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        shell: /bin/bash
+        groups: "{{ item.groups }}"
+        append: true
+        create_home: true
+      loop: "{{ pam_users }}"
+      tags:
+        - users
+
+    - name: Set homework users password
+      become: true
+      ansible.builtin.command:
+        cmd: chpasswd
+        stdin: "{{ item.name }}:{{ homework_user_password }}"
+      loop: "{{ pam_users }}"
+      changed_when: false
+      no_log: true
+      tags:
+        - users
+
+    - name: Add vagrant to admin group
+      become: true
+      ansible.builtin.user:
+        name: vagrant
+        groups:
+          - admin
+        append: true
+      tags:
+        - users
+        - pam
+
+    - name: Enable SSH password authentication
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PasswordAuthentication\s+'
+        line: PasswordAuthentication yes
+        validate: /usr/sbin/sshd -t -f %s
+      notify: restart ssh
+      tags:
+        - ssh
+
+    - name: Ensure PAM holiday list is installed
+      become: true
+      ansible.builtin.copy:
+        src: holidays.conf
+        dest: /etc/security/pam_holidays.conf
+        owner: root
+        group: root
+        mode: "0644"
+      tags:
+        - pam
+
+    - name: Install PAM login check script
+      become: true
+      ansible.builtin.template:
+        src: login.sh.j2
+        dest: /usr/local/bin/login.sh
+        owner: root
+        group: root
+        mode: "0755"
+      tags:
+        - pam
+
+    - name: Enable pam_exec check for sshd
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/sshd
+        insertafter: '^@include common-account'
+        line: 'account required pam_exec.so quiet /usr/local/bin/login.sh'
+        state: present
+      tags:
+        - pam
+
+    - name: Ensure Docker service is enabled and running
+      become: true
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+      tags:
+        - docker
+
+    - name: Allow dockeradm to restart Docker service
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/dockeradm-docker-restart
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+        content: |
+          dockeradm ALL=(root) NOPASSWD: /bin/systemctl restart docker.service, /usr/bin/systemctl restart docker.service, /bin/systemctl restart docker, /usr/bin/systemctl restart docker
+      tags:
+        - docker
+
+- import_playbook: test_access.yml
