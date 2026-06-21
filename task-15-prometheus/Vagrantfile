@@ -1,0 +1,22 @@
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento-ubuntu-24.04-local"
+  config.vm.box_url = "file:///C:/Users/zazhigina/Downloads/ubuntu-24.04"
+  config.vm.hostname = "task-15-prometheus"
+  config.vm.boot_timeout = 600
+  config.ssh.insert_key = false
+  config.ssh.keep_alive = true
+  config.vm.network "private_network", ip: "192.168.56.15"
+  config.vm.network "forwarded_port", guest: 3000, host: 3000, auto_correct: true
+  config.vm.network "forwarded_port", guest: 9090, host: 9090, auto_correct: true
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "task-15-prometheus"
+    vb.memory = 2048
+    vb.cpus = 2
+  end
+
+  config.vm.provision "file", source: "prometheus.yml", destination: "/tmp/prometheus.yml"
+  config.vm.provision "file", source: "prometheus.service", destination: "/tmp/prometheus.service"
+  config.vm.provision "file", source: "node_exporter.service", destination: "/tmp/node_exporter.service"
+  config.vm.provision "shell", path: "provision.sh"
+end

@@ -16,5 +16,5 @@
 ## [Задание 12: Работа с Ansible](./task-12-ansible/README.md)
 ## [Задание 13: Vagrant](./task-13-vagrant/README.md)
 ## [Задание 14: Docker](./task-14-docker/README.md)
-## [Задание 15: TODO]
+## [Задание 15: Настройка мониторинга с Prometheus и Grafana](./task-15-prometheus/README.md)
 ## [Задание 16: PAM](./task-16-pam/README.md)
