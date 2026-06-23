@@ -1,0 +1,10 @@
+module(load="imudp")
+module(load="imtcp")
+
+input(type="imudp" port="514")
+input(type="imtcp" port="514")
+
+template(name="RemoteLogsPath" type="string" string="{{ rsyslog_log_dir }}/%HOSTNAME%/%PROGRAMNAME%.log")
+
+*.* ?RemoteLogsPath
+& stop

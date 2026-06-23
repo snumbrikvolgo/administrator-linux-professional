@@ -1,0 +1,81 @@
+---
+- name: Collect installed package facts on web
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Install required packages on web
+  ansible.builtin.dnf:
+    name:
+      - nginx
+      - audit
+      - rsyslog
+    state: present
+  when: "'nginx' not in ansible_facts.packages or 'audit' not in ansible_facts.packages or 'rsyslog' not in ansible_facts.packages"
+
+- name: Ensure nginx access log directory exists
+  ansible.builtin.file:
+    path: /var/log/nginx
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure nginx main settings
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart nginx
+
+- name: Deploy sample index page
+  ansible.builtin.copy:
+    dest: /usr/share/nginx/html/index.html
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      <!doctype html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <title>OTUS task-17 web</title>
+      </head>
+      <body>
+        <h1>OTUS task-17 web</h1>
+        <p>Nginx logging lab is running.</p>
+      </body>
+      </html>
+  notify: restart nginx
+
+- name: Configure rsyslog forwarding for system and audit logs
+  ansible.builtin.template:
+    src: web-rsyslog.conf.j2
+    dest: /etc/rsyslog.d/10-web-forwarding.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart rsyslog
+
+- name: Configure audit rules for nginx
+  ansible.builtin.template:
+    src: nginx-audit.rules.j2
+    dest: /etc/audit/rules.d/nginx.rules
+    owner: root
+    group: root
+    mode: "0640"
+  notify: load audit rules
+
+- name: Flush web handlers before validation
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure nginx, rsyslog and auditd are enabled and running
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - nginx
+    - rsyslog
+    - auditd

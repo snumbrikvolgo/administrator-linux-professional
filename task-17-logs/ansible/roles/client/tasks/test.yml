@@ -1,0 +1,4 @@
+---
+- name: Generate test log entry on client
+  ansible.builtin.command: logger -t client-test "client rsyslog forwarding works"
+  changed_when: false

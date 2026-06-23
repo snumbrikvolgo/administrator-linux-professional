@@ -1,0 +1,40 @@
+---
+- name: Generate logs on web
+  hosts: webservers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run web test tasks
+      ansible.builtin.import_role:
+        name: web
+        tasks_from: test
+
+- name: Generate logs on client
+  hosts: clients
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run client test tasks
+      ansible.builtin.import_role:
+        name: client
+        tasks_from: test
+
+- name: Verify logs on log server
+  hosts: logservers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run log test tasks
+      ansible.builtin.import_role:
+        name: log
+        tasks_from: test
+
+- name: Verify nginx logs in ELK
+  hosts: elkservers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run elk test tasks
+      ansible.builtin.import_role:
+        name: elk
+        tasks_from: test

@@ -1,0 +1,22 @@
+---
+- name: Wait until audit event with nginx_conf appears in forwarded web logs
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -R -n "nginx_conf" {{ rsyslog_log_dir }}/web
+  args:
+    executable: /bin/bash
+  register: forwarded_audit_search
+  retries: 12
+  delay: 10
+  until: forwarded_audit_search.rc == 0
+  changed_when: false
+
+- name: Wait for forwarded client test log on log server
+  ansible.builtin.wait_for:
+    path: "{{ rsyslog_log_dir }}/client/client-test.log"
+    search_regex: client rsyslog forwarding works
+    timeout: 60
+
+- name: Check forwarded client log contents
+  ansible.builtin.command: grep -n "client rsyslog forwarding works" {{ rsyslog_log_dir }}/client/client-test.log
+  changed_when: false

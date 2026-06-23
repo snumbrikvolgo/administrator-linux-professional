@@ -18,3 +18,4 @@
 ## [Задание 14: Docker](./task-14-docker/README.md)
 ## [Задание 15: Настройка мониторинга с Prometheus и Grafana](./task-15-prometheus/README.md)
 ## [Задание 16: PAM](./task-16-pam/README.md)
+## [Задание 17: Logs](./task-17-logs/README.md)

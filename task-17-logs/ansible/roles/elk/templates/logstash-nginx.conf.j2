@@ -1,0 +1,40 @@
+input {
+  tcp {
+    port => {{ logstash_syslog_port }}
+    type => "syslog"
+    codec => plain
+  }
+
+  udp {
+    port => {{ logstash_syslog_port }}
+    type => "syslog"
+    codec => plain
+  }
+}
+
+filter {
+  if "nginx_access" in [message] {
+    mutate {
+      add_field => { "log_type" => "nginx_access" }
+    }
+  } else if "nginx_error" in [message] {
+    mutate {
+      add_field => { "log_type" => "nginx_error" }
+    }
+  }
+
+  grok {
+    match => { "message" => "%{SYSLOGTIMESTAMP:syslog_timestamp} %{HOSTNAME:syslog_host} %{DATA:syslog_tag}: %{GREEDYDATA:syslog_message}" }
+  }
+
+  mutate {
+    add_field => { "[host][name]" => "%{syslog_host}" }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["http://127.0.0.1:{{ elasticsearch_http_port }}"]
+    index => "nginx-logs-%{+YYYY.MM.dd}"
+  }
+}

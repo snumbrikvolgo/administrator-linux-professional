@@ -1,0 +1,24 @@
+---
+- name: Wait for Elasticsearch HTTP endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1:{{ elasticsearch_http_port }}
+    status_code: 200
+  register: elastic_healthcheck
+  retries: 30
+  delay: 10
+  until: elastic_healthcheck.status == 200
+  changed_when: false
+
+- name: Wait for Elasticsearch to index nginx logs
+  ansible.builtin.uri:
+    url: http://127.0.0.1:{{ elasticsearch_http_port }}/nginx-logs-*/_search?q=host.name:web&size=1
+    status_code: 200
+  register: elastic_result
+  retries: 20
+  delay: 5
+  until:
+    - elastic_result.json is defined
+    - elastic_result.json.hits is defined
+    - elastic_result.json.hits.total is defined
+    - (elastic_result.json.hits.total.value | int) > 0
+  changed_when: false

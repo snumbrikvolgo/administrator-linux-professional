@@ -1,0 +1,25 @@
+---
+- name: Collect installed package facts on client
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Install rsyslog on client
+  ansible.builtin.dnf:
+    name: rsyslog
+    state: present
+  when: "'rsyslog' not in ansible_facts.packages"
+
+- name: Configure rsyslog forwarding on client
+  ansible.builtin.template:
+    src: rsyslog-client.conf.j2
+    dest: /etc/rsyslog.d/10-client-forwarding.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart rsyslog
+
+- name: Ensure rsyslog is enabled and running on client
+  ansible.builtin.service:
+    name: rsyslog
+    state: started
+    enabled: true

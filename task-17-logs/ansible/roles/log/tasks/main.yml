@@ -1,0 +1,35 @@
+---
+- name: Collect installed package facts on log server
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Install rsyslog on log server
+  ansible.builtin.dnf:
+    name: rsyslog
+    state: present
+  when: "'rsyslog' not in ansible_facts.packages"
+
+- name: Ensure rsyslog storage directory exists
+  ansible.builtin.file:
+    path: "{{ rsyslog_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy rsyslog server configuration
+  ansible.builtin.template:
+    src: log-server.conf.j2
+    dest: /etc/rsyslog.d/10-central-log-server.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart rsyslog
+  tags:
+    - rsyslog
+
+- name: Ensure rsyslog is enabled and running
+  ansible.builtin.service:
+    name: rsyslog
+    state: started
+    enabled: true

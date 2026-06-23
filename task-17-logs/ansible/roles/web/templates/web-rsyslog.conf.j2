@@ -1,0 +1,20 @@
+module(load="imfile")
+
+$PreserveFQDN on
+
+template(name="ForwardFormat" type="string" string="<%PRI%>%TIMESTAMP% %HOSTNAME% %syslogtag%%msg%\n")
+
+input(type="imfile"
+      File="/var/log/audit/audit.log"
+      Tag="audit"
+      Severity="info"
+      Facility="local6")
+
+*.* action(type="omfwd"
+           target="{{ log_server_ip }}"
+           port="514"
+           protocol="tcp"
+           action.resumeRetryCount="-1"
+           queue.type="linkedList"
+           queue.size="10000"
+           Template="ForwardFormat")

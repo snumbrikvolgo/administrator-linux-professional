@@ -1,0 +1,191 @@
+---
+- name: Check whether swapfile already exists
+  ansible.builtin.stat:
+    path: "{{ elk_swapfile_path }}"
+  register: elk_swapfile
+
+- name: Collect installed package facts on elk
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Check whether swapfile is active
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: elk_active_swap
+  changed_when: false
+
+- name: Create swapfile for ELK host
+  ansible.builtin.command: fallocate -l {{ elk_swapfile_size_mb }}M {{ elk_swapfile_path }}
+  args:
+    creates: "{{ elk_swapfile_path }}"
+  when: not elk_swapfile.stat.exists
+
+- name: Set swapfile permissions
+  ansible.builtin.file:
+    path: "{{ elk_swapfile_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not elk_swapfile.stat.exists
+
+- name: Format swapfile
+  ansible.builtin.command: mkswap {{ elk_swapfile_path }}
+  when: not elk_swapfile.stat.exists
+
+- name: Enable swapfile
+  ansible.builtin.command: swapon {{ elk_swapfile_path }}
+  when: elk_swapfile_path not in elk_active_swap.stdout_lines
+
+- name: Persist swapfile in fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: "^{{ elk_swapfile_path | regex_escape() }}\\s+swap\\s+swap\\s+defaults\\s+0\\s+0$"
+    line: "{{ elk_swapfile_path }} swap swap defaults 0 0"
+    state: present
+
+- name: Import Elastic GPG key
+  ansible.builtin.rpm_key:
+    state: present
+    key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+- name: Configure Elastic repository
+  ansible.builtin.template:
+    src: elastic.repo.j2
+    dest: /etc/yum.repos.d/elastic.repo
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Java runtime for ELK
+  ansible.builtin.dnf:
+    name: java-17-openjdk-headless
+    state: present
+    lock_timeout: 300
+  when: "'java-17-openjdk-headless' not in ansible_facts.packages"
+
+- name: Install Elasticsearch, Kibana and Logstash
+  ansible.builtin.dnf:
+    name:
+      - elasticsearch
+      - kibana
+      - logstash
+    state: present
+    lock_timeout: 300
+  when: "'elasticsearch' not in ansible_facts.packages or 'kibana' not in ansible_facts.packages or 'logstash' not in ansible_facts.packages"
+
+- name: Verify Elastic repo file exists
+  ansible.builtin.stat:
+    path: /etc/yum.repos.d/elastic.repo
+  register: elastic_repo_file
+
+- name: Fail if Elastic repo file is missing
+  ansible.builtin.fail:
+    msg: /etc/yum.repos.d/elastic.repo was not created on elk
+  when: not elastic_repo_file.stat.exists
+
+- name: Configure Elasticsearch
+  ansible.builtin.template:
+    src: elasticsearch.yml.j2
+    dest: /etc/elasticsearch/elasticsearch.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart elasticsearch
+
+- name: Configure Elasticsearch JVM heap for lab VM
+  ansible.builtin.template:
+    src: elasticsearch-heap.options.j2
+    dest: /etc/elasticsearch/jvm.options.d/heap.options
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart elasticsearch
+
+- name: Read Elasticsearch keystore entries
+  ansible.builtin.command: /usr/share/elasticsearch/bin/elasticsearch-keystore list
+  register: elasticsearch_keystore_entries
+  changed_when: false
+  failed_when: false
+
+- name: Remove Elastic auto-configured secure keystore passwords
+  ansible.builtin.command: /usr/share/elasticsearch/bin/elasticsearch-keystore remove {{ item }}
+  loop:
+    - xpack.security.transport.ssl.keystore.secure_password
+    - xpack.security.transport.ssl.truststore.secure_password
+    - xpack.security.http.ssl.keystore.secure_password
+  when: item in elasticsearch_keystore_entries.stdout_lines
+  notify: restart elasticsearch
+
+- name: Create systemd override directory for Elasticsearch
+  ansible.builtin.file:
+    path: /etc/systemd/system/elasticsearch.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Increase Elasticsearch startup timeout
+  ansible.builtin.template:
+    src: elasticsearch-override.conf.j2
+    dest: /etc/systemd/system/elasticsearch.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart elasticsearch
+
+- name: Configure Kibana
+  ansible.builtin.template:
+    src: kibana.yml.j2
+    dest: /etc/kibana/kibana.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart kibana
+
+- name: Configure Logstash pipeline
+  ansible.builtin.template:
+    src: logstash-nginx.conf.j2
+    dest: /etc/logstash/conf.d/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart logstash
+
+- name: Flush ELK handlers except Elasticsearch runtime start
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure Elasticsearch is enabled
+  ansible.builtin.systemd:
+    name: elasticsearch
+    enabled: true
+
+- name: Start Elasticsearch without blocking on long JVM bootstrap
+  ansible.builtin.systemd:
+    name: elasticsearch
+    state: started
+    no_block: true
+
+- name: Wait for Elasticsearch HTTP port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ elasticsearch_http_port }}"
+    timeout: 600
+    delay: 10
+
+- name: Wait for Elasticsearch HTTP API
+  ansible.builtin.uri:
+    url: http://127.0.0.1:{{ elasticsearch_http_port }}
+    status_code: 200
+  register: elasticsearch_http_check
+  retries: 30
+  delay: 10
+  until: elasticsearch_http_check.status == 200
+  changed_when: false
+
+- name: Ensure Kibana and Logstash are enabled and running
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - kibana
+    - logstash

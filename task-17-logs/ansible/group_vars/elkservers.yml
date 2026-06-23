@@ -1,0 +1,8 @@
+---
+elasticsearch_http_port: 9200
+kibana_http_port: 5601
+logstash_syslog_port: 5140
+elk_swapfile_path: /swapfile
+elk_swapfile_size_mb: 4096
+elasticsearch_heap_size: 256m
+elasticsearch_timeout_start_sec: 420

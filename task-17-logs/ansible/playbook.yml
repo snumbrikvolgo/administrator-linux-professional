@@ -1,0 +1,24 @@
+---
+- name: Configure central rsyslog server
+  hosts: logservers
+  become: true
+  roles:
+    - role: log
+
+- name: Configure web server
+  hosts: webservers
+  become: true
+  roles:
+    - role: web
+
+- name: Configure client log sender
+  hosts: clients
+  become: true
+  roles:
+    - role: client
+
+- name: Configure ELK server
+  hosts: elkservers
+  become: true
+  roles:
+    - role: elk

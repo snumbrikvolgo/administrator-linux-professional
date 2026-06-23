@@ -1,0 +1,16 @@
+---
+- name: restart elasticsearch
+  ansible.builtin.systemd:
+    name: elasticsearch
+    state: started
+    no_block: true
+
+- name: restart kibana
+  ansible.builtin.service:
+    name: kibana
+    state: restarted
+
+- name: restart logstash
+  ansible.builtin.service:
+    name: logstash
+    state: restarted

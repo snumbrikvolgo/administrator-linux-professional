@@ -1,0 +1,6 @@
+---
+log_server_ip: 192.168.57.11
+elk_server_ip: 192.168.57.13
+elk_syslog_port: 5140
+audit_watch_key: nginx_conf
+audit_watch_path: /etc/nginx/

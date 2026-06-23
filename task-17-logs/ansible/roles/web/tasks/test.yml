@@ -1,0 +1,20 @@
+---
+- name: Generate nginx access log entries
+  ansible.builtin.uri:
+    url: http://127.0.0.1/
+    status_code: 200
+  changed_when: false
+
+- name: Touch nginx root config directory to create audit event
+  ansible.builtin.file:
+    path: /etc/nginx/.audit-trigger
+    state: touch
+    mode: "0644"
+
+- name: Wait for audit event to be written locally
+  ansible.builtin.command: ausearch -k {{ audit_watch_key }}
+  register: audit_search
+  retries: 10
+  delay: 3
+  until: audit_search.rc == 0 and audit_watch_key in audit_search.stdout
+  changed_when: false
