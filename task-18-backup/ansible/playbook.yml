@@ -1,0 +1,18 @@
+---
+- name: Prepare common Debian settings
+  hosts: all
+  become: true
+  roles:
+    - role: common
+
+- name: Configure backup server
+  hosts: backupservers
+  become: true
+  roles:
+    - role: backup_server
+
+- name: Initialize borg repository and schedule backups
+  hosts: clients
+  become: true
+  roles:
+    - role: client

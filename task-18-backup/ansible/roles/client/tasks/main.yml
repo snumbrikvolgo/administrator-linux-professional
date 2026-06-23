@@ -1,0 +1,80 @@
+---
+- name: Ensure root SSH directory exists
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check whether borg SSH key already exists
+  ansible.builtin.stat:
+    path: /root/.ssh/id_ed25519_borg
+  register: borg_private_key
+
+- name: Generate SSH key pair for borg backups
+  ansible.builtin.command: ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519_borg
+  when: not borg_private_key.stat.exists
+
+- name: Read borg SSH public key
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_ed25519_borg.pub
+  register: borg_public_key_raw
+
+- name: Store borg SSH public key as host fact
+  ansible.builtin.set_fact:
+    client_borg_public_key: "{{ borg_public_key_raw.content | b64decode | trim }}"
+
+- name: Add client SSH public key to borg account
+  ansible.builtin.lineinfile:
+    path: /home/borg/.ssh/authorized_keys
+    line: "{{ client_borg_public_key }}"
+    state: present
+    create: true
+    owner: borg
+    group: borg
+    mode: "0600"
+  delegate_to: backup_server
+
+- name: Deploy systemd service for borg backup
+  ansible.builtin.template:
+    src: borg-backup.service.j2
+    dest: /etc/systemd/system/borg-backup.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
+- name: Deploy systemd timer for borg backup
+  ansible.builtin.template:
+    src: borg-backup.timer.j2
+    dest: /etc/systemd/system/borg-backup.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
+- name: Flush handlers before repository initialization
+  ansible.builtin.meta: flush_handlers
+
+- name: Check whether borg repository is already initialized
+  ansible.builtin.command: borg info {{ backup_repo_remote }}
+  register: borg_repo_info
+  changed_when: false
+  failed_when: false
+  environment:
+    BORG_RSH: "{{ backup_ssh_command }}"
+    BORG_PASSPHRASE: "{{ backup_passphrase }}"
+
+- name: Initialize encrypted borg repository
+  ansible.builtin.command: borg init --encryption=repokey {{ backup_repo_remote }}
+  when: borg_repo_info.rc != 0
+  environment:
+    BORG_RSH: "{{ backup_ssh_command }}"
+    BORG_PASSPHRASE: "{{ backup_passphrase }}"
+
+- name: Ensure borg backup timer is enabled and running
+  ansible.builtin.service:
+    name: borg-backup.timer
+    state: started
+    enabled: true

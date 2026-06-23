@@ -1,0 +1,79 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+require "fileutils"
+
+MACHINES = {
+  :backup_server => {
+    :box_name => "debian/bookworm64",
+    :hostname => "backup-server",
+    :ip => "192.168.57.20",
+    :memory => 1024,
+    :cpus => 2,
+    :extra_disk_mb => 2048
+  },
+  :client => {
+    :box_name => "debian/bookworm64",
+    :hostname => "client",
+    :ip => "192.168.57.21",
+    :memory => 1024,
+    :cpus => 2
+  }
+}.freeze
+
+Vagrant.configure("2") do |config|
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.boot_timeout = 1200
+  config.ssh.insert_key = false
+  config.ssh.keep_alive = true
+
+  MACHINES.each_with_index do |(name, machine), index|
+    config.vm.define name do |box|
+      box.vm.box = machine[:box_name]
+      box.vm.hostname = machine[:hostname]
+      box.vm.network "private_network", ip: machine[:ip]
+      box.vm.network "forwarded_port",
+        id: "ssh",
+        guest: 22,
+        host: 2210 + index,
+        host_ip: "0.0.0.0",
+        auto_correct: false
+      box.ssh.host = ENV.fetch("VAGRANT_WSL_HOST_IP", "127.0.0.1")
+
+      box.vm.provision "shell", inline: <<-SHELL
+        set -eux
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 sudo
+      SHELL
+
+      box.vm.provider "virtualbox" do |vb|
+        vb.name = "task-18-#{name}"
+        vb.memory = machine[:memory]
+        vb.cpus = machine[:cpus]
+
+        next unless machine[:extra_disk_mb]
+
+        disk_dir = File.join(Dir.pwd, ".vagrant", "disks")
+        FileUtils.mkdir_p(disk_dir)
+        disk_path = File.join(disk_dir, "#{name}-backup.vdi")
+
+        unless File.exist?(disk_path)
+          vb.customize [
+            "createhd",
+            "--filename", disk_path,
+            "--size", machine[:extra_disk_mb]
+          ]
+        end
+
+        vb.customize [
+          "storageattach", :id,
+          "--storagectl", "SATA Controller",
+          "--port", 1,
+          "--device", 0,
+          "--type", "hdd",
+          "--medium", disk_path
+        ]
+      end
+    end
+  end
+end

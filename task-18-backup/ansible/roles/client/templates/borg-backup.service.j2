@@ -1,0 +1,14 @@
+[Unit]
+Description=Borg Backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment="BORG_PASSPHRASE={{ backup_passphrase }}"
+Environment="BORG_RSH={{ backup_ssh_command }}"
+Environment="REPO={{ backup_repo_remote }}"
+Environment="BACKUP_TARGET=/etc"
+ExecStart=/bin/bash -lc 'borg create --stats --list "${REPO}::etc-{now:%%Y-%%m-%%d_%%H:%%M:%%S}" "${BACKUP_TARGET}"'
+ExecStart=/bin/bash -lc 'borg prune --list --keep-daily {{ backup_keep_daily }} --keep-monthly {{ backup_keep_monthly }} "${REPO}"'
+ExecStart=/bin/bash -lc 'borg check "${REPO}"'

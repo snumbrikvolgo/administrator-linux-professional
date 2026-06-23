@@ -1,0 +1,71 @@
+---
+- name: Check borg backup timer is enabled
+  ansible.builtin.command: systemctl is-enabled borg-backup.timer
+  register: borg_timer_enabled
+  changed_when: false
+
+- name: Check borg backup timer is active
+  ansible.builtin.command: systemctl is-active borg-backup.timer
+  register: borg_timer_active
+  changed_when: false
+
+- name: List archives before first service run
+  ansible.builtin.command: borg list --short {{ backup_repo_remote }}
+  register: borg_before_first_run
+  changed_when: false
+  environment:
+    BORG_RSH: "{{ backup_ssh_command }}"
+    BORG_PASSPHRASE: "{{ backup_passphrase }}"
+
+- name: Run borg backup service first time
+  ansible.builtin.command: systemctl start borg-backup.service
+  register: first_borg_backup_run
+  changed_when: true
+
+- name: List archives after first service run
+  ansible.builtin.command: borg list --short {{ backup_repo_remote }}
+  register: borg_after_first_run
+  changed_when: false
+  environment:
+    BORG_RSH: "{{ backup_ssh_command }}"
+    BORG_PASSPHRASE: "{{ backup_passphrase }}"
+
+- name: Store first created archive name
+  ansible.builtin.set_fact:
+    first_run_new_archives: "{{ borg_after_first_run.stdout_lines | difference(borg_before_first_run.stdout_lines) }}"
+
+- name: Wait one second for a different archive timestamp
+  ansible.builtin.pause:
+    seconds: 1
+
+- name: Run borg backup service second time
+  ansible.builtin.command: systemctl start borg-backup.service
+  register: second_borg_backup_run
+  changed_when: true
+
+- name: List archives after second service run
+  ansible.builtin.command: borg list --short {{ backup_repo_remote }}
+  register: borg_after_second_run
+  changed_when: false
+  environment:
+    BORG_RSH: "{{ backup_ssh_command }}"
+    BORG_PASSPHRASE: "{{ backup_passphrase }}"
+
+- name: Store second created archive name
+  ansible.builtin.set_fact:
+    second_run_new_archives: "{{ borg_after_second_run.stdout_lines | difference(borg_after_first_run.stdout_lines) }}"
+
+- name: Assert timer works and repeated service runs create new backups
+  ansible.builtin.assert:
+    that:
+      - borg_timer_enabled.stdout == 'enabled'
+      - borg_timer_active.stdout == 'active'
+      - first_borg_backup_run.rc == 0
+      - second_borg_backup_run.rc == 0
+      - first_run_new_archives | length == 1
+      - second_run_new_archives | length == 1
+      - first_run_new_archives[0] is search('^etc-')
+      - second_run_new_archives[0] is search('^etc-')
+      - borg_after_second_run.stdout_lines | select('equalto', second_run_new_archives[0]) | list | length == 1
+    fail_msg: Timer/service is misconfigured or repeated service runs do not create new backups.
+    success_msg: Timer is enabled, active, and repeated service runs create new borg archives.

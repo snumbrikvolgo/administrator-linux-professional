@@ -1,0 +1,10 @@
+---
+- name: Run backup manually on client
+  hosts: clients
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run client backup test tasks
+      ansible.builtin.import_role:
+        name: client
+        tasks_from: test

@@ -1,0 +1,17 @@
+---
+- name: Install common packages on Debian hosts
+  ansible.builtin.apt:
+    name:
+      - borgbackup
+      - openssh-server
+      - openssh-client
+      - e2fsprogs
+      - parted
+    state: present
+    update_cache: true
+
+- name: Ensure SSH service is enabled and running
+  ansible.builtin.service:
+    name: ssh
+    state: started
+    enabled: true
