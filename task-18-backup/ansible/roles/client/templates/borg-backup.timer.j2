@@ -3,7 +3,7 @@ Description=Borg Backup Timer
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=5min
+OnUnitActiveSec={{ backup_timer_interval }}
 Persistent=true
 
 [Install]

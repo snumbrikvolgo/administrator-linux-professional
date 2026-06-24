@@ -2,10 +2,17 @@
 backup_repo_path: /var/backup
 backup_repo_dir: /var/backup/borg-repo
 backup_repo_remote: "borg@192.168.57.20:/var/backup/borg-repo"
+backup_target: /opt/backup-data
 backup_disk_device: /dev/sdb
 backup_passphrase: "OtusBackup2026!"
-backup_archive_prefix: etc
+backup_archive_prefix: backup-data
 backup_keep_daily: 90
 backup_keep_monthly: 6
 backup_log_tag: borg-backup
 backup_ssh_command: "ssh -i /root/.ssh/id_ed25519_borg -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+backup_timer_interval: 5min
+backup_test_timer_interval: 30s
+backup_test_archive_prefix: backup-data-test
+backup_test_wait_seconds: 140
+backup_test_file_interval_seconds: 8
+backup_test_file_count: 15

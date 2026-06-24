@@ -36,6 +36,14 @@
     mode: "0600"
   delegate_to: backup_server
 
+- name: Ensure backup target directory exists
+  ansible.builtin.file:
+    path: "{{ backup_target }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Deploy systemd service for borg backup
   ansible.builtin.template:
     src: borg-backup.service.j2

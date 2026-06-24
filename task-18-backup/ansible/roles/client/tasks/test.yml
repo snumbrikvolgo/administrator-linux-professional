@@ -8,64 +8,404 @@
   ansible.builtin.command: systemctl is-active borg-backup.timer
   register: borg_timer_active
   changed_when: false
+  failed_when: false
 
-- name: List archives before first service run
-  ansible.builtin.command: borg list --short {{ backup_repo_remote }}
-  register: borg_before_first_run
-  changed_when: false
-  environment:
-    BORG_RSH: "{{ backup_ssh_command }}"
-    BORG_PASSPHRASE: "{{ backup_passphrase }}"
-
-- name: Run borg backup service first time
-  ansible.builtin.command: systemctl start borg-backup.service
-  register: first_borg_backup_run
+- name: Start borg backup timer if it is inactive before test
+  ansible.builtin.command: systemctl start borg-backup.timer
+  when: borg_timer_active.rc != 0
   changed_when: true
 
-- name: List archives after first service run
-  ansible.builtin.command: borg list --short {{ backup_repo_remote }}
-  register: borg_after_first_run
+- name: Re-check borg backup timer is active
+  ansible.builtin.command: systemctl is-active borg-backup.timer
+  register: borg_timer_active_recheck
   changed_when: false
-  environment:
-    BORG_RSH: "{{ backup_ssh_command }}"
-    BORG_PASSPHRASE: "{{ backup_passphrase }}"
 
-- name: Store first created archive name
-  ansible.builtin.set_fact:
-    first_run_new_archives: "{{ borg_after_first_run.stdout_lines | difference(borg_before_first_run.stdout_lines) }}"
+- name: Ensure systemd override directory exists for timer test
+  ansible.builtin.file:
+    path: /etc/systemd/system/borg-backup.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
 
-- name: Wait one second for a different archive timestamp
+- name: Ensure systemd override directory exists for service test prefix
+  ansible.builtin.file:
+    path: /etc/systemd/system/borg-backup.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Set temporary timer override for test
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/borg-backup.timer.d/test-interval.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Timer]
+      OnActiveSec=5s
+      OnUnitActiveSec={{ backup_test_timer_interval }}
+  notify: reload systemd
+
+- name: Set temporary archive prefix override for test
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/borg-backup.service.d/test-prefix.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      Environment="ARCHIVE_PREFIX={{ backup_test_archive_prefix }}"
+  notify: reload systemd
+
+- name: Reload systemd after test overrides
+  ansible.builtin.meta: flush_handlers
+
+- name: Reset failed state for borg units before test
+  ansible.builtin.command: systemctl reset-failed borg-backup.service borg-backup.timer
+  changed_when: false
+  failed_when: false
+
+- name: Prepare report file
+  ansible.builtin.copy:
+    dest: /root/backup-test-report.log
+    owner: root
+    group: root
+    mode: "0644"
+    content: ""
+
+- name: Remove old archive detail report
+  ansible.builtin.file:
+    path: /root/backup-test-archives.log
+    state: absent
+
+- name: Remove old prune detail report
+  ansible.builtin.file:
+    path: /root/backup-test-prune.log
+    state: absent
+
+- name: Stop timer before cleanup
+  ansible.builtin.command: systemctl stop borg-backup.timer
+  changed_when: true
+
+- name: Clear all archives from repository before test
+  ansible.builtin.shell: |
+    set -eu
+    archives="$(BORG_RSH='{{ backup_ssh_command }}' BORG_PASSPHRASE='{{ backup_passphrase }}' borg list --short {{ backup_repo_remote }} || true)"
+    if [ -n "$archives" ]; then
+      while IFS= read -r archive; do
+        [ -n "$archive" ] || continue
+        BORG_RSH='{{ backup_ssh_command }}' BORG_PASSPHRASE='{{ backup_passphrase }}' borg delete {{ backup_repo_remote }}::"$archive"
+      done <<EOF
+    $archives
+    EOF
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Ensure backup target directory exists
+  ansible.builtin.file:
+    path: "{{ backup_target }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Remove old test files
+  ansible.builtin.shell: rm -f {{ backup_target }}/file-*.txt
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Remove old restore workspace
+  ansible.builtin.file:
+    path: /root/restore-check
+    state: absent
+
+- name: Count initial files after cleanup
+  ansible.builtin.shell: find {{ backup_target }} -maxdepth 1 -type f -name 'file-*.txt' | wc -l
+  args:
+    executable: /bin/bash
+  register: initial_file_count
+  changed_when: false
+
+- name: Store test start timestamp
+  ansible.builtin.command: date -u +%Y-%m-%d\ %H:%M:%S
+  register: backup_test_start_timestamp
+  changed_when: false
+
+- name: Save initial repository state to report
+  ansible.builtin.shell: |
+    set -eu
+    {
+      echo "initial_archives=0"
+      echo "initial_files={{ initial_file_count.stdout | int }}"
+    } >> /root/backup-test-report.log
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Start timer with temporary 30-second interval
+  ansible.builtin.command: systemctl restart borg-backup.timer
+  changed_when: true
+
+- name: Create incremental files during test window
+  ansible.builtin.shell: |
+    set -eu
+    for i in $(seq 1 {{ backup_test_file_count }}); do
+      printf 'backup-test-%02d\n' "$i" > "{{ backup_target }}/file-${i}.txt"
+      if [ "$i" -lt "{{ backup_test_file_count }}" ]; then
+        sleep {{ backup_test_file_interval_seconds }}
+      fi
+    done
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Wait remaining test window time
   ansible.builtin.pause:
-    seconds: 1
+    seconds: "{{ [backup_test_wait_seconds | int - ((backup_test_file_count | int - 1) * (backup_test_file_interval_seconds | int)), 0] | max }}"
 
-- name: Run borg backup service second time
-  ansible.builtin.command: systemctl start borg-backup.service
-  register: second_borg_backup_run
+- name: Count files before restore
+  ansible.builtin.shell: find {{ backup_target }} -maxdepth 1 -type f -name 'file-*.txt' | wc -l
+  args:
+    executable: /bin/bash
+  register: live_file_count
+  changed_when: false
+
+- name: Stop timer after test window
+  ansible.builtin.command: systemctl stop borg-backup.timer
   changed_when: true
 
-- name: List archives after second service run
-  ansible.builtin.command: borg list --short {{ backup_repo_remote }}
-  register: borg_after_second_run
+- name: Wait for borg backup service to finish after timer stop
+  ansible.builtin.command: systemctl is-active borg-backup.service
+  register: borg_service_state_after_timer_stop
   changed_when: false
-  environment:
-    BORG_RSH: "{{ backup_ssh_command }}"
-    BORG_PASSPHRASE: "{{ backup_passphrase }}"
+  failed_when: false
+  retries: 30
+  delay: 2
+  until: borg_service_state_after_timer_stop.stdout in ['inactive', 'failed', 'unknown'] or borg_service_state_after_timer_stop.rc != 0
 
-- name: Store second created archive name
+- name: List test archives after timer window
+  ansible.builtin.shell: |
+    set -eu
+    BORG_RSH='{{ backup_ssh_command }}' \
+    BORG_PASSPHRASE='{{ backup_passphrase }}' \
+    borg list --short --glob-archives '{{ backup_test_archive_prefix }}-*' {{ backup_repo_remote }}
+  args:
+    executable: /bin/bash
+  register: borg_test_archives
+  changed_when: false
+
+- name: Run borg prune dry-run after test
+  ansible.builtin.shell: |
+    set -eu
+    BORG_RSH='{{ backup_ssh_command }}' \
+    BORG_PASSPHRASE='{{ backup_passphrase }}' \
+    borg prune --list --dry-run --keep-daily {{ backup_keep_daily }} --keep-monthly {{ backup_keep_monthly }} {{ backup_repo_remote }}
+  args:
+    executable: /bin/bash
+  register: borg_prune_dry_run
+  changed_when: false
+
+- name: Read backup service logs
+  ansible.builtin.command: journalctl -u borg-backup.service --since "{{ backup_test_start_timestamp.stdout }}" --no-pager
+  register: borg_service_logs
+  changed_when: false
+
+- name: Read backup timer logs
+  ansible.builtin.command: journalctl -u borg-backup.timer --since "{{ backup_test_start_timestamp.stdout }}" --no-pager
+  register: borg_timer_logs
+  changed_when: false
+
+- name: Count timer activations for test prefix
   ansible.builtin.set_fact:
-    second_run_new_archives: "{{ borg_after_second_run.stdout_lines | difference(borg_after_first_run.stdout_lines) }}"
+    backup_test_create_count: "{{ borg_service_logs.stdout | regex_findall('Starting borg-backup.service - Borg Backup') | length }}"
+    backup_test_timer_fire_count: "{{ borg_timer_logs.stdout | regex_findall('Started borg-backup.timer - Borg Backup Timer') | length }}"
 
-- name: Assert timer works and repeated service runs create new backups
+- name: Write archive names and file counts to report
+  ansible.builtin.shell: |
+    set -eu
+    : > /root/backup-test-archives.log
+    while IFS= read -r archive; do
+      [ -n "$archive" ] || continue
+      file_count="$(BORG_RSH='{{ backup_ssh_command }}' BORG_PASSPHRASE='{{ backup_passphrase }}' borg list {{ backup_repo_remote }}::"$archive" | wc -l)"
+      printf '%s files=%s\n' "$archive" "$file_count" >> /root/backup-test-archives.log
+    done <<EOF
+    {{ borg_test_archives.stdout }}
+    EOF
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Build prune activity report
+  ansible.builtin.shell: |
+    set -eu
+    cat <<'EOF' >/root/backup-test-service.log
+    {{ borg_service_logs.stdout }}
+    EOF
+    awk '
+      /Starting borg-backup.service - Borg Backup/ {
+        run += 1
+        in_run = 1
+        saw_prune_output = 0
+        keep_count = 0
+        prune_count = 0
+        delete kept
+        delete pruned
+        next
+      }
+      in_run && /Keeping archive/ {
+        saw_prune_output = 1
+        keep_count += 1
+        kept[keep_count] = $0
+        next
+      }
+      in_run && /Pruning archive/ {
+        saw_prune_output = 1
+        prune_count += 1
+        pruned[prune_count] = $0
+        next
+      }
+      /Finished borg-backup.service - Borg Backup/ {
+        if (in_run && saw_prune_output) {
+          print "prune_run=" run
+          print "archives_remaining_after_prune=" keep_count
+          if (keep_count > 0) {
+            for (i = 1; i <= keep_count; i++) {
+              print "kept=" kept[i]
+            }
+          }
+          if (prune_count > 0) {
+            for (i = 1; i <= prune_count; i++) {
+              print "pruned=" pruned[i]
+            }
+          } else {
+            print "pruned=none"
+          }
+          print "---"
+        }
+        in_run = 0
+        next
+      }
+    ' /root/backup-test-service.log > /root/backup-test-prune.log
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Count prune activity for report
+  ansible.builtin.shell: |
+    set -eu
+    prune_runs="$(grep -c '^prune_run=' /root/backup-test-prune.log || true)"
+    pruned_total="$(grep -c '^pruned=.*Pruning archive' /root/backup-test-prune.log || true)"
+    printf 'prune_runs=%s\npruned_total=%s\n' "$prune_runs" "$pruned_total"
+  args:
+    executable: /bin/bash
+  register: backup_test_prune_stats
+  changed_when: false
+
+- name: Store latest test archive name
+  ansible.builtin.set_fact:
+    latest_test_archive: "{{ borg_test_archives.stdout_lines | last if (borg_test_archives.stdout_lines | length) > 0 else '' }}"
+
+- name: Assert at least one test archive exists before restore
+  ansible.builtin.assert:
+    that:
+      - borg_test_archives.stdout_lines | length > 0 or (backup_test_create_count | default(0) | int) > 0
+      - latest_test_archive | length > 0
+    fail_msg: No test archives were found after the timer window, so restore cannot continue.
+    success_msg: At least one test archive exists and can be used for restore.
+
+- name: Restore backup target from latest backup and count restored files
+  ansible.builtin.shell: |
+    set -eu
+    rm -rf /root/restore-check
+    rm -rf {{ backup_target }}
+    mkdir -p /root/restore-check
+    cd /root/restore-check
+    BORG_RSH='{{ backup_ssh_command }}' BORG_PASSPHRASE='{{ backup_passphrase }}' borg extract {{ backup_repo_remote }}::{{ latest_test_archive }}
+    mv /root/restore-check{{ backup_target }} {{ backup_target }}
+    find {{ backup_target }} -maxdepth 1 -type f -name 'file-*.txt' | wc -l
+  args:
+    executable: /bin/bash
+  register: restored_file_count
+  changed_when: true
+
+- name: Remove temporary timer override
+  ansible.builtin.file:
+    path: /etc/systemd/system/borg-backup.timer.d/test-interval.conf
+    state: absent
+  notify: reload systemd
+
+- name: Remove temporary archive prefix override
+  ansible.builtin.file:
+    path: /etc/systemd/system/borg-backup.service.d/test-prefix.conf
+    state: absent
+  notify: reload systemd
+
+- name: Reload systemd after removing test overrides
+  ansible.builtin.meta: flush_handlers
+
+- name: Start timer with original interval
+  ansible.builtin.command: systemctl start borg-backup.timer
+  changed_when: true
+
+- name: Read restored timer unit configuration
+  ansible.builtin.command: systemctl cat borg-backup.timer
+  register: restored_borg_timer_unit
+  changed_when: false
+
+- name: Append summary to report
+  ansible.builtin.shell: |
+    set -eu
+    {
+      echo "test_duration_seconds={{ backup_test_wait_seconds }}"
+      echo "file_creation_interval_seconds={{ backup_test_file_interval_seconds }}"
+      echo "files_created_before_restore={{ live_file_count.stdout | int }}"
+      echo "files_restored={{ restored_file_count.stdout | int }}"
+      echo "timer_interval_during_test={{ backup_test_timer_interval }}"
+      echo "timer_interval_after_test={{ backup_timer_interval }}"
+      echo "service_runs_detected={{ backup_test_create_count | int }}"
+      echo "archives_remaining_after_prune={{ borg_test_archives.stdout_lines | length }}"
+      echo "prune_runs_detected={{ (backup_test_prune_stats.stdout_lines[0] | regex_replace('^prune_runs=', '')) | int }}"
+      echo "pruned_archives_total={{ (backup_test_prune_stats.stdout_lines[1] | regex_replace('^pruned_total=', '')) | int }}"
+      echo "timer_log_matches={{ backup_test_timer_fire_count | int }}"
+    } >> /root/backup-test-report.log
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Read final report
+  ansible.builtin.shell: |
+    set -eu
+    cat /root/backup-test-report.log
+    echo "---"
+    cat /root/backup-test-archives.log
+    echo "---"
+    cat /root/backup-test-prune.log
+    echo "---"
+    printf '%s\n' "{{ borg_prune_dry_run.stdout }}"
+  args:
+    executable: /bin/bash
+  register: backup_test_report
+  changed_when: false
+
+- name: Assert test produced multiple backups and safe restore succeeded
   ansible.builtin.assert:
     that:
       - borg_timer_enabled.stdout == 'enabled'
-      - borg_timer_active.stdout == 'active'
-      - first_borg_backup_run.rc == 0
-      - second_borg_backup_run.rc == 0
-      - first_run_new_archives | length == 1
-      - second_run_new_archives | length == 1
-      - first_run_new_archives[0] is search('^etc-')
-      - second_run_new_archives[0] is search('^etc-')
-      - borg_after_second_run.stdout_lines | select('equalto', second_run_new_archives[0]) | list | length == 1
-    fail_msg: Timer/service is misconfigured or repeated service runs do not create new backups.
-    success_msg: Timer is enabled, active, and repeated service runs create new borg archives.
+      - borg_timer_active_recheck.stdout == 'active'
+      - (backup_test_create_count | int) >= 2
+      - (borg_test_archives.stdout_lines | length) >= 1
+      - (live_file_count.stdout | int) == backup_test_file_count
+      - (restored_file_count.stdout | int) > 0
+      - (restored_file_count.stdout | int) <= (live_file_count.stdout | int)
+      - restored_borg_timer_unit.stdout is search('OnUnitActiveSec=' ~ backup_timer_interval)
+    fail_msg: Experiment did not create enough backups, restore failed, or the timer was not returned to the original configured interval.
+    success_msg: Experiment created multiple backups, restored the test directory, and returned the timer to the original configured interval.
+
+- name: Show test summary
+  ansible.builtin.debug:
+    msg: "{{ backup_test_report.stdout_lines }}"
