@@ -1,0 +1,157 @@
+---
+- name: Check Ansible access
+  hosts: all_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ping over Ansible transport
+      ping:
+
+- name: Check server-to-server connectivity
+  hosts: servers
+  become: true
+  gather_facts: false
+  vars:
+    peer_servers:
+      - 192.168.0.2
+      - 192.168.2.130
+      - 192.168.1.2
+    server_ip_map:
+      centralServer: 192.168.0.2
+      office1Server: 192.168.2.130
+      office2Server: 192.168.1.2
+  tasks:
+    - name: Ping all other servers from each server
+      command: "ping -c 2 {{ item }}"
+      loop: "{{ peer_servers }}"
+      when: item != server_ip_map[inventory_hostname]
+      changed_when: false
+
+- name: Validate route selection between servers
+  hosts: servers
+  become: true
+  gather_facts: false
+  vars:
+    route_checks:
+      centralServer:
+        - dest: 192.168.2.130
+          via: 192.168.0.1
+          dev: eth1
+        - dest: 192.168.1.2
+          via: 192.168.0.1
+          dev: eth1
+      office1Server:
+        - dest: 192.168.0.2
+          via: 192.168.2.129
+          dev: eth1
+        - dest: 192.168.1.2
+          via: 192.168.2.129
+          dev: eth1
+      office2Server:
+        - dest: 192.168.0.2
+          via: 192.168.1.1
+          dev: eth1
+        - dest: 192.168.2.130
+          via: 192.168.1.1
+          dev: eth1
+  tasks:
+    - name: Resolve route to peer server
+      command: "ip route get {{ item.dest }}"
+      loop: "{{ route_checks[inventory_hostname] }}"
+      changed_when: false
+      register: peer_route_get
+
+    - name: Validate next hop and device for peer server routes
+      assert:
+        that:
+          - item.stdout is search('via ' ~ item.item.via)
+          - item.stdout is search('dev ' ~ item.item.dev)
+        fail_msg: "Unexpected route from {{ inventory_hostname }} to {{ item.item.dest }}: {{ item.stdout }}"
+      loop: "{{ peer_route_get.results }}"
+
+- name: Check internet routing through inetRouter
+  hosts: centralServer,office1Server,office2Server
+  become: true
+  gather_facts: false
+  vars:
+    public_route_checks:
+      centralServer:
+        via: 192.168.0.1
+        dev: eth1
+      office1Server:
+        via: 192.168.2.129
+        dev: eth1
+      office2Server:
+        via: 192.168.1.1
+        dev: eth1
+    expected_public_hops:
+      centralServer:
+        - 192.168.0.1
+        - 192.168.255.1
+      office1Server:
+        - 192.168.2.129
+        - 192.168.255.9
+        - 192.168.255.1
+      office2Server:
+        - 192.168.1.1
+        - 192.168.255.5
+        - 192.168.255.1
+  tasks:
+    - name: Resolve route to public DNS
+      command: ip route get 8.8.8.8
+      changed_when: false
+      register: public_route_get
+
+    - name: Validate public route next hop and device
+      assert:
+        that:
+          - public_route_get.stdout is search('via ' ~ public_route_checks[inventory_hostname].via)
+          - public_route_get.stdout is search('dev ' ~ public_route_checks[inventory_hostname].dev)
+        fail_msg: "Unexpected public route from {{ inventory_hostname }}: {{ public_route_get.stdout }}"
+
+    - name: Traceroute to public DNS
+      command: traceroute -n -m 5 8.8.8.8
+      changed_when: false
+      register: public_trace
+
+    - name: Print public traceroute output
+      debug:
+        var: public_trace.stdout_lines
+
+    - name: Validate public traceroute hops
+      assert:
+        that:
+          - public_trace.stdout is search(item)
+        fail_msg: "Expected hop {{ item }} was not found in traceroute from {{ inventory_hostname }}"
+      loop: "{{ expected_public_hops[inventory_hostname] }}"
+
+- name: Validate internal routes from office servers
+  hosts: office1Server,office2Server
+  become: true
+  gather_facts: false
+  vars:
+    expected_internal_hops:
+      office1Server:
+        - 192.168.2.129
+        - 192.168.255.9
+        - 192.168.0.2
+      office2Server:
+        - 192.168.1.1
+        - 192.168.255.5
+        - 192.168.0.2
+  tasks:
+    - name: Traceroute to centralServer
+      command: traceroute -n -m 4 192.168.0.2
+      changed_when: false
+      register: central_trace
+
+    - name: Print internal traceroute output
+      debug:
+        var: central_trace.stdout_lines
+
+    - name: Validate internal traceroute hops
+      assert:
+        that:
+          - central_trace.stdout is search(item)
+        fail_msg: "Expected hop {{ item }} was not found in traceroute from {{ inventory_hostname }} to centralServer"
+      loop: "{{ expected_internal_hops[inventory_hostname] }}"

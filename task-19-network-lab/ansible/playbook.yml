@@ -1,0 +1,218 @@
+---
+- name: Bootstrap inetRouter
+  hosts: inetRouter
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install base packages on inetRouter
+      apt:
+        name:
+          - traceroute
+          - iptables
+          - iproute2
+          - netplan.io
+        update_cache: true
+        state: present
+
+    - name: Enable IPv4 forwarding on inetRouter
+      lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^net\.ipv4\.conf\.all\.forwarding\s*='
+        line: 'net.ipv4.conf.all.forwarding = 1'
+        state: present
+
+    - name: Apply IPv4 forwarding on inetRouter
+      command: sysctl -p
+
+    - name: Configure inetRouter netplan
+      template:
+        src: "50-vagrant_inetRouter.yaml.j2"
+        dest: /etc/netplan/50-vagrant.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install persistent NAT rules on inetRouter
+      template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "iptables_rules.ipv4.j2", dest: "/etc/iptables_rules.ipv4", mode: "0644" }
+        - { src: "iptables_restore.j2", dest: "/etc/network/if-pre-up.d/iptables", mode: "0755" }
+
+    - name: Restart networking on inetRouter
+      shell: systemctl restart systemd-networkd || true
+      changed_when: true
+
+    - name: Restore iptables rules now on inetRouter
+      shell: iptables-restore < /etc/iptables_rules.ipv4
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+- name: Configure centralRouter
+  hosts: centralRouter
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install packages on centralRouter
+      apt:
+        name:
+          - traceroute
+          - iptables
+          - iproute2
+          - netplan.io
+        update_cache: true
+        state: present
+
+    - name: Disable default route on NAT interface for centralRouter
+      template:
+        src: 00-installer-config.yaml.j2
+        dest: /etc/netplan/00-installer-config.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable IPv4 forwarding on centralRouter
+      lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^net\.ipv4\.conf\.all\.forwarding\s*='
+        line: 'net.ipv4.conf.all.forwarding = 1'
+        state: present
+
+    - name: Apply IPv4 forwarding on centralRouter
+      command: sysctl -p
+
+    - name: Configure centralRouter routes
+      template:
+        src: "50-vagrant_centralRouter.yaml.j2"
+        dest: /etc/netplan/50-vagrant.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Apply netplan on centralRouter in background
+      shell: "nohup sh -c 'sleep 2; netplan apply' >/tmp/netplan-apply.log 2>&1 &"
+      async: 1
+      poll: 0
+      changed_when: true
+
+    - name: Wait for centralRouter after netplan apply
+      wait_for_connection:
+        delay: 5
+        timeout: 120
+
+- name: Finalize inetRouter after centralRouter
+  hosts: inetRouter
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Re-apply inetRouter netplan after centralRouter is configured
+      command: netplan apply
+      changed_when: true
+
+    - name: Ensure reverse routes to internal and transit networks exist on inetRouter
+      shell: |
+        ip route replace 192.168.0.0/24 via 192.168.255.2 dev eth1
+        ip route replace 192.168.1.0/24 via 192.168.255.2 dev eth1
+        ip route replace 192.168.2.0/24 via 192.168.255.2 dev eth1
+        ip route replace 192.168.255.4/30 via 192.168.255.2 dev eth1
+        ip route replace 192.168.255.8/30 via 192.168.255.2 dev eth1
+      changed_when: true
+
+- name: Configure office routers
+  hosts: office1Router,office2Router
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install packages on office routers
+      apt:
+        name:
+          - traceroute
+          - iptables
+          - iproute2
+          - netplan.io
+        update_cache: true
+        state: present
+
+    - name: Disable default route on NAT interface for office routers
+      template:
+        src: 00-installer-config.yaml.j2
+        dest: /etc/netplan/00-installer-config.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable IPv4 forwarding on office routers
+      lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^net\.ipv4\.conf\.all\.forwarding\s*='
+        line: 'net.ipv4.conf.all.forwarding = 1'
+        state: present
+
+    - name: Apply IPv4 forwarding on office routers
+      command: sysctl -p
+
+    - name: Configure office router routes
+      template:
+        src: "50-vagrant_{{ inventory_hostname }}.yaml.j2"
+        dest: /etc/netplan/50-vagrant.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Apply netplan on office routers in background
+      shell: "nohup sh -c 'sleep 2; netplan apply' >/tmp/netplan-apply.log 2>&1 &"
+      async: 1
+      poll: 0
+      changed_when: true
+
+    - name: Wait for office routers after netplan apply
+      wait_for_connection:
+        delay: 5
+        timeout: 120
+
+- name: Configure servers
+  hosts: centralServer,office1Server,office2Server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install packages on servers
+      apt:
+        name:
+          - traceroute
+          - iptables
+          - iproute2
+          - netplan.io
+        update_cache: true
+        state: present
+
+    - name: Disable default route on NAT interface for servers
+      template:
+        src: 00-installer-config.yaml.j2
+        dest: /etc/netplan/00-installer-config.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Configure server routes
+      template:
+        src: "50-vagrant_{{ inventory_hostname }}.yaml.j2"
+        dest: /etc/netplan/50-vagrant.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Apply netplan on servers in background
+      shell: "nohup sh -c 'sleep 2; netplan apply' >/tmp/netplan-apply.log 2>&1 &"
+      async: 1
+      poll: 0
+      changed_when: true
+
+    - name: Wait for servers after netplan apply
+      wait_for_connection:
+        delay: 5
+        timeout: 120
