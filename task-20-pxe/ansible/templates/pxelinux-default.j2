@@ -1,0 +1,5 @@
+DEFAULT install
+LABEL install
+  KERNEL debian/vmlinuz
+  INITRD debian/initrd.gz
+  APPEND auto=true priority=critical url=http://{{ pxe_server_ip }}/srv/ks/preseed.cfg interface=auto netcfg/choose_interface=auto

@@ -1,0 +1,14 @@
+interface={{ pxe_interface }}
+bind-interfaces
+
+dhcp-range={{ pxe_interface }},10.0.0.100,10.0.0.120,12h
+dhcp-option={{ pxe_interface }},option:router,{{ pxe_server_ip }}
+dhcp-option={{ pxe_interface }},option:dns-server,{{ pxe_server_ip }}
+
+dhcp-match=set:efi-x86_64,option:client-arch,7
+dhcp-match=set:efi-x86_64,option:client-arch,9
+dhcp-boot=tag:efi-x86_64,bootx64.efi
+dhcp-boot=pxelinux.0
+
+enable-tftp
+tftp-root=/srv/tftp

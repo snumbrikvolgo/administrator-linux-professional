@@ -1,0 +1,52 @@
+---
+- name: Check Debian UEFI ISO PXE server services and files
+  hosts: pxe
+  become: true
+  tasks:
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert required services are running
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['dnsmasq.service'].state == 'running'
+          - ansible_facts.services['apache2.service'].state == 'running'
+
+    - name: Check PXE and autoinstall files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /srv/tftp/bootx64.efi
+        - /srv/tftp/grub/grub.cfg
+        - /srv/tftp/debian/vmlinuz
+        - /srv/tftp/debian/initrd.gz
+        - /srv/images/debian-13.6.0-amd64-netinst.iso
+        - /srv/ks/preseed.cfg
+      register: pxe_files
+
+    - name: Assert PXE and autoinstall files exist
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+      loop: "{{ pxe_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check HTTP access to preseed
+      ansible.builtin.uri:
+        url: http://10.0.0.20/srv/ks/preseed.cfg
+        method: GET
+        status_code: 200
+        return_content: true
+      register: preseed
+
+    - name: Check HTTP access to Debian ISO
+      ansible.builtin.uri:
+        url: http://10.0.0.20/srv/images/debian-13.6.0-amd64-netinst.iso
+        method: HEAD
+        status_code: 200
+
+    - name: Assert preseed contains installer settings
+      ansible.builtin.assert:
+        that:
+          - "'d-i debian-installer/locale string en_US.UTF-8' in preseed.content"

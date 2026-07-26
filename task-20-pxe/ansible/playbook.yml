@@ -1,0 +1,215 @@
+---
+- name: Configure PXE server for Debian UEFI ISO install
+  hosts: pxe
+  become: true
+  vars:
+    pxe_interface: eth1
+    pxe_server_ip: 10.0.0.20
+    debian_iso_url: https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.6.0-amd64-netinst.iso
+    debian_iso_name: debian-13.6.0-amd64-netinst.iso
+    debian_netboot_url: https://deb.debian.org/debian/dists/stable/main/installer-amd64/current/images/netboot/netboot.tar.gz
+    debian_mirror: deb.debian.org
+    debian_directory: /debian
+  tasks:
+    - name: Disable ufw if installed
+      ansible.builtin.systemd:
+        name: ufw
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Install PXE server packages
+      ansible.builtin.apt:
+        name:
+          - apache2
+          - dnsmasq
+          - grub-efi-amd64-signed
+          - iptables
+          - shim-signed
+          - pxelinux
+          - syslinux-common
+          - xorriso
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create service directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /srv/tftp
+        - /srv/tftp/debian
+        - /srv/tftp/grub
+        - /srv/images
+        - /srv/ks
+
+    - name: Check Debian netinst ISO
+      ansible.builtin.stat:
+        path: "/srv/images/{{ debian_iso_name }}"
+      register: debian_iso
+
+    - name: Download Debian netinst ISO
+      ansible.builtin.get_url:
+        url: "{{ debian_iso_url }}"
+        dest: "/srv/images/{{ debian_iso_name }}"
+        mode: "0644"
+        timeout: 600
+      when: not debian_iso.stat.exists
+
+    - name: Download Debian PXE installer files
+      ansible.builtin.get_url:
+        url: "{{ debian_netboot_url }}"
+        dest: /tmp/debian-netboot-amd64.tar.gz
+        mode: "0644"
+        timeout: 300
+
+    - name: Unpack Debian PXE installer files
+      ansible.builtin.unarchive:
+        src: /tmp/debian-netboot-amd64.tar.gz
+        dest: /srv/tftp
+        remote_src: true
+
+    - name: Copy Debian PXE kernel to stable path
+      ansible.builtin.copy:
+        src: /srv/tftp/debian-installer/amd64/linux
+        dest: /srv/tftp/debian/vmlinuz
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Copy Debian PXE initrd to stable path
+      ansible.builtin.copy:
+        src: /srv/tftp/debian-installer/amd64/initrd.gz
+        dest: /srv/tftp/debian/initrd.gz
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Find signed GRUB network EFI loader
+      ansible.builtin.find:
+        paths:
+          - /usr/lib/grub
+          - /usr/lib/shim
+        patterns:
+          - grubnetx64.efi.signed
+          - grubx64.efi.signed
+          - bootx64.efi
+        recurse: true
+        file_type: file
+      register: efi_loaders
+
+    - name: Assert UEFI PXE loader was found
+      ansible.builtin.assert:
+        that:
+          - efi_loaders.matched | int > 0
+        fail_msg: "UEFI PXE loader was not found after installing grub-efi-amd64-signed/shim-signed."
+
+    - name: Install UEFI PXE loader
+      ansible.builtin.copy:
+        src: "{{ (efi_loaders.files | sort(attribute='path') | first).path }}"
+        dest: /srv/tftp/bootx64.efi
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Configure dnsmasq for DHCP and TFTP
+      ansible.builtin.template:
+        src: dnsmasq-pxe.conf.j2
+        dest: /etc/dnsmasq.d/pxe.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart dnsmasq
+
+    - name: Persist IPv4 forwarding for PXE clients
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-pxe-forwarding.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          net.ipv4.ip_forward=1
+
+    - name: Enable IPv4 forwarding now
+      ansible.builtin.command: sysctl -w net.ipv4.ip_forward=1
+      changed_when: false
+
+    - name: Configure NAT for PXE clients
+      ansible.builtin.shell: iptables -t nat -C POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE || iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE
+      changed_when: false
+
+    - name: Configure Apache virtual host
+      ansible.builtin.template:
+        src: ks-server.conf.j2
+        dest: /etc/apache2/sites-available/ks-server.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart apache2
+
+    - name: Enable Apache PXE site
+      ansible.builtin.command: a2ensite ks-server.conf
+      register: a2ensite_result
+      changed_when: "'Enabling site' in a2ensite_result.stdout"
+      notify: Restart apache2
+
+    - name: Disable default Apache site
+      ansible.builtin.command: a2dissite 000-default.conf
+      register: a2dissite_result
+      changed_when: "'Site 000-default disabled' in a2dissite_result.stdout"
+      notify: Restart apache2
+
+    - name: Configure BIOS PXE menu
+      ansible.builtin.template:
+        src: pxelinux-default.j2
+        dest: /srv/tftp/amd64/pxelinux.cfg/default
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart dnsmasq
+
+      when: false
+
+    - name: Configure UEFI GRUB PXE menu
+      ansible.builtin.template:
+        src: grub.cfg.j2
+        dest: /srv/tftp/grub/grub.cfg
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart dnsmasq
+
+    - name: Configure Debian preseed
+      ansible.builtin.template:
+        src: preseed.cfg.j2
+        dest: /srv/ks/preseed.cfg
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable and start services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - apache2
+        - dnsmasq
+
+  handlers:
+    - name: Restart apache2
+      ansible.builtin.systemd:
+        name: apache2
+        state: restarted
+
+    - name: Restart dnsmasq
+      ansible.builtin.systemd:
+        name: dnsmasq
+        state: restarted

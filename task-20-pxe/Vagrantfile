@@ -1,0 +1,57 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.boot_timeout = 1200
+  config.ssh.insert_key = false
+  config.ssh.keep_alive = true
+
+  config.vm.define "pxeserver" do |server|
+    server.vm.box = "debian/bookworm64"
+    server.vm.hostname = "pxeserver"
+
+    server.vm.network "forwarded_port",
+      id: "ssh",
+      guest: 22,
+      host: 2240,
+      host_ip: "0.0.0.0",
+      auto_correct: false
+
+    server.vm.network "forwarded_port",
+      guest: 80,
+      host: 8080,
+      host_ip: "127.0.0.1",
+      auto_correct: false
+
+    server.vm.network "private_network",
+      ip: "10.0.0.20",
+      adapter: 2,
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "pxenet"
+
+    server.vm.network "private_network",
+      ip: "192.168.60.10",
+      adapter: 3,
+      netmask: "255.255.255.0"
+
+    server.ssh.host = ENV.fetch("VAGRANT_WSL_HOST_IP", "127.0.0.1")
+
+    server.vm.provision "shell", inline: <<-SHELL
+      set -eux
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y python3 sudo
+    SHELL
+
+    server.vm.provider "virtualbox" do |vb|
+      vb.name = "task-20-pxeserver"
+      vb.memory = 2048
+      vb.cpus = 2
+      vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+    end
+  end
+
+  # PXE client is intentionally created by create-pxeclient.ps1 as an empty VM.
+  # Vagrant boxes already contain disks and Vagrant waits for SSH, which is a
+  # poor fit for a machine that must boot only from UEFI PXE.
+end
