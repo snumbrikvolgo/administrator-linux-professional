@@ -1,0 +1,42 @@
+---
+- name: Configure base packages
+  hosts: all_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - common
+
+- name: Configure routes
+  hosts: all_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - routing
+
+- name: Configure SSH port knocking on inetRouter
+  hosts: inetRouter
+  become: true
+  gather_facts: false
+  roles:
+    - inet_router
+
+- name: Configure knock client on centralRouter
+  hosts: centralRouter
+  become: true
+  gather_facts: false
+  roles:
+    - central_router
+
+- name: Configure nginx on centralServer
+  hosts: centralServer
+  become: true
+  gather_facts: false
+  roles:
+    - web_server
+
+- name: Configure 8080 to 80 DNAT on inetRouter2
+  hosts: inetRouter2
+  become: true
+  gather_facts: false
+  roles:
+    - inet_router2

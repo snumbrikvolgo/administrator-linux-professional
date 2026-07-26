@@ -1,0 +1,22 @@
+---
+- name: Install DNAT rules
+  template:
+    src: iptables_rules.ipv4.j2
+    dest: /etc/iptables_rules.ipv4
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install iptables restore hook
+  template:
+    src: iptables_restore.j2
+    dest: /etc/network/if-pre-up.d/iptables
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Apply DNAT rules
+  shell: iptables-restore < /etc/iptables_rules.ipv4
+  args:
+    executable: /bin/bash
+  changed_when: true

@@ -1,0 +1,61 @@
+---
+- name: Disable Vagrant NAT default route on internal hosts
+  template:
+    src: "00-installer-config.yaml.j2"
+    dest: /etc/netplan/00-installer-config.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  when: inventory_hostname != "inetRouter"
+
+- name: Configure host netplan
+  template:
+    src: "50-vagrant_{{ inventory_hostname }}.yaml.j2"
+    dest: /etc/netplan/50-vagrant.yaml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable IPv4 forwarding on routers
+  copy:
+    dest: /etc/sysctl.d/99-task-21-routing.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      net.ipv4.ip_forward = 1
+  when: inventory_hostname in groups["routers"]
+
+- name: Apply sysctl on routers
+  command: sysctl --system
+  changed_when: true
+  when: inventory_hostname in groups["routers"]
+
+- name: Apply netplan
+  command: netplan apply
+  changed_when: true
+
+- name: Keep required routes active after netplan apply
+  shell: "{{ route_commands[inventory_hostname] }}"
+  args:
+    executable: /bin/bash
+  changed_when: true
+  vars:
+    route_commands:
+      inetRouter: |
+        sysctl -w net.ipv4.ip_forward=1
+        ip route replace 192.168.0.0/24 via 192.168.255.2 dev eth1
+        ip route replace 192.168.56.0/24 via 192.168.255.2 dev eth1
+      centralRouter: |
+        sysctl -w net.ipv4.ip_forward=1
+        ip route del default via 10.0.2.2 dev eth0 2>/dev/null || true
+        ip route replace default via 192.168.255.1 dev eth1
+        ip route replace 192.168.56.0/24 via 192.168.255.6 dev eth3
+      centralServer: |
+        ip route del default via 10.0.2.2 dev eth0 2>/dev/null || true
+        ip route replace default via 192.168.0.1 dev eth1
+        ip route replace 192.168.56.0/24 via 192.168.0.1 dev eth1
+      inetRouter2: |
+        sysctl -w net.ipv4.ip_forward=1
+        ip route del default via 10.0.2.2 dev eth0 2>/dev/null || true
+        ip route replace 192.168.0.0/24 via 192.168.255.5 dev eth1

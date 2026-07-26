@@ -1,0 +1,29 @@
+---
+- name: Install knock script
+  copy:
+    src: knock.sh
+    dest: /usr/local/bin/knock-inetRouter
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy Vagrant insecure key for lab SSH check
+  copy:
+    src: /home/zazhigina/.vagrant.d/insecure_private_key
+    dest: /home/vagrant/.ssh/insecure_private_key
+    owner: vagrant
+    group: vagrant
+    mode: "0600"
+
+- name: Install SSH helper
+  copy:
+    dest: /usr/local/bin/ssh-inetRouter
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      exec ssh -i /home/vagrant/.ssh/insecure_private_key \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        vagrant@192.168.255.1 "$@"

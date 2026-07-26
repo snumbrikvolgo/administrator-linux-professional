@@ -1,0 +1,9 @@
+---
+- name: Install base packages
+  apt:
+    name:
+      - iproute2
+      - iptables
+      - netplan.io
+      - openssh-client
+    state: present

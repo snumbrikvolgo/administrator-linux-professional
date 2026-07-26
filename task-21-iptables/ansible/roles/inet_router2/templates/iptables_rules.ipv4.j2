@@ -1,0 +1,14 @@
+*filter
+:INPUT ACCEPT [0:0]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+-A FORWARD -p tcp -d 192.168.0.2 --dport 80 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+-A FORWARD -p tcp -s 192.168.0.2 --sport 80 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+COMMIT
+*nat
+:PREROUTING ACCEPT [0:0]
+:INPUT ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+-A PREROUTING -i eth2 -p tcp --dport 8080 -j DNAT --to-destination 192.168.0.2:80
+COMMIT

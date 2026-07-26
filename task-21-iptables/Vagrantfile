@@ -1,0 +1,96 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+MACHINES = {
+  :inetRouter => {
+    :box_name => "generic/ubuntu2004",
+    :hostname => "inetRouter",
+    :memory => 768,
+    :cpus => 1,
+    :mgmt_ip => "192.168.60.10",
+    :net => [
+      ["192.168.255.1", 2, "255.255.255.252", "inet-central"]
+    ]
+  },
+  :centralRouter => {
+    :box_name => "generic/ubuntu2004",
+    :hostname => "centralRouter",
+    :memory => 768,
+    :cpus => 1,
+    :mgmt_ip => "192.168.60.11",
+    :net => [
+      ["192.168.255.2", 2, "255.255.255.252", "inet-central"],
+      ["192.168.0.1", 3, "255.255.255.240", "central-net"],
+      ["192.168.255.5", 4, "255.255.255.252", "inet2-central"]
+    ]
+  },
+  :centralServer => {
+    :box_name => "generic/ubuntu2004",
+    :hostname => "centralServer",
+    :memory => 768,
+    :cpus => 1,
+    :mgmt_ip => "192.168.60.12",
+    :net => [
+      ["192.168.0.2", 2, "255.255.255.240", "central-net"]
+    ]
+  },
+  :inetRouter2 => {
+    :box_name => "generic/ubuntu2004",
+    :hostname => "inetRouter2",
+    :memory => 768,
+    :cpus => 1,
+    :mgmt_ip => "192.168.60.13",
+    :net => [
+      ["192.168.255.6", 2, "255.255.255.252", "inet2-central"],
+      ["192.168.56.10", 3, "255.255.255.0", nil]
+    ]
+  }
+}.freeze
+
+Vagrant.configure("2") do |config|
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.boot_timeout = 1200
+  config.ssh.insert_key = false
+  config.ssh.keep_alive = true
+
+  MACHINES.each_with_index do |(name, machine), index|
+    config.vm.define name do |box|
+      box.vm.box = machine[:box_name]
+      box.vm.hostname = machine[:hostname]
+      box.vm.network "forwarded_port",
+        id: "ssh",
+        guest: 22,
+        host: 2260 + index,
+        host_ip: "0.0.0.0",
+        auto_correct: false
+      box.ssh.host = ENV.fetch("VAGRANT_WSL_HOST_IP", "127.0.0.1")
+
+      machine[:net].each do |ipconf|
+        network_opts = {
+          ip: ipconf[0],
+          adapter: ipconf[1],
+          netmask: ipconf[2]
+        }
+        network_opts[:virtualbox__intnet] = ipconf[3] unless ipconf[3].nil?
+        box.vm.network("private_network", **network_opts)
+      end
+
+      box.vm.network "private_network",
+        ip: machine[:mgmt_ip],
+        adapter: 8,
+        netmask: "255.255.255.0"
+
+      box.vm.provision "shell", inline: <<-SHELL
+        set -eux
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 sudo
+      SHELL
+
+      box.vm.provider "virtualbox" do |vb|
+        vb.name = "task-21-#{name}"
+        vb.memory = machine[:memory]
+        vb.cpus = machine[:cpus]
+      end
+    end
+  end
+end

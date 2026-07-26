@@ -1,0 +1,25 @@
+---
+- name: Install nginx
+  apt:
+    name: nginx
+    update_cache: true
+    state: present
+
+- name: Create test page
+  copy:
+    dest: /var/www/html/index.html
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      task-21 iptables: centralServer nginx
+
+- name: Enable and start nginx
+  service:
+    name: nginx
+    enabled: true
+    state: started
+
+- name: Ensure nginx is running after route changes
+  command: systemctl enable --now nginx
+  changed_when: false
