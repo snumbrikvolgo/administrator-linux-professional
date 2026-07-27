@@ -1,0 +1,57 @@
+frr version 8.1
+frr defaults traditional
+hostname {{ inventory_hostname }}
+log syslog informational
+no ipv6 forwarding
+service integrated-vtysh-config
+!
+{% set links = {
+  'router1': [
+    {'if': 'eth1', 'desc': 'r1-r2', 'addr': '10.0.10.1/30', 'cost': 1000},
+    {'if': 'eth2', 'desc': 'r1-r3', 'addr': '10.0.12.1/30', 'cost': 100},
+    {'if': 'eth3', 'desc': 'net_router1', 'addr': '192.168.10.1/24', 'cost': 100}
+  ],
+  'router2': [
+    {'if': 'eth1', 'desc': 'r1-r2', 'addr': '10.0.10.2/30', 'cost': 1000},
+    {'if': 'eth2', 'desc': 'r2-r3', 'addr': '10.0.11.2/30', 'cost': 100},
+    {'if': 'eth3', 'desc': 'net_router2', 'addr': '192.168.20.1/24', 'cost': 100}
+  ],
+  'router3': [
+    {'if': 'eth1', 'desc': 'r2-r3', 'addr': '10.0.11.1/30', 'cost': 100},
+    {'if': 'eth2', 'desc': 'r1-r3', 'addr': '10.0.12.2/30', 'cost': 100},
+    {'if': 'eth3', 'desc': 'net_router3', 'addr': '192.168.30.1/24', 'cost': 100}
+  ]
+} %}
+{% for link in links[inventory_hostname] %}
+interface {{ link.if }}
+ description {{ link.desc }}
+ ip address {{ link.addr }}
+ ip ospf mtu-ignore
+ ip ospf cost {{ link.cost }}
+ ip ospf hello-interval 10
+ ip ospf dead-interval 30
+!
+{% endfor %}
+router ospf
+ router-id {{ router_id }}
+{% if inventory_hostname == 'router1' %}
+ network 10.0.10.0/30 area 0
+ network 10.0.12.0/30 area 0
+ network 192.168.10.0/24 area 0
+ neighbor 10.0.10.2
+ neighbor 10.0.12.2
+{% elif inventory_hostname == 'router2' %}
+ network 10.0.10.0/30 area 0
+ network 10.0.11.0/30 area 0
+ network 192.168.20.0/24 area 0
+ neighbor 10.0.10.1
+ neighbor 10.0.11.1
+{% elif inventory_hostname == 'router3' %}
+ network 10.0.11.0/30 area 0
+ network 10.0.12.0/30 area 0
+ network 192.168.30.0/24 area 0
+ neighbor 10.0.11.2
+ neighbor 10.0.12.1
+{% endif %}
+!
+log file /var/log/frr/frr.log

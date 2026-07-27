@@ -1,0 +1,67 @@
+---
+- name: Configure host netplan
+  template:
+    src: "50-vagrant_{{ inventory_hostname }}.yaml.j2"
+    dest: /etc/netplan/50-vagrant.yaml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apply netplan
+  command: netplan apply
+  changed_when: true
+
+- name: Add FRR repository key
+  apt_key:
+    url: https://deb.frrouting.org/frr/keys.asc
+    state: present
+
+- name: Add FRR repository
+  apt_repository:
+    repo: "deb https://deb.frrouting.org/frr {{ ansible_distribution_release }} frr-stable"
+    state: present
+
+- name: Install FRR packages
+  apt:
+    name:
+      - frr
+      - frr-pythontools
+    state: present
+    update_cache: true
+
+- name: Enable packet forwarding and allow asymmetric routing
+  copy:
+    dest: /etc/sysctl.d/99-task-22-ospf.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      net.ipv4.conf.all.forwarding = 1
+      net.ipv4.conf.all.rp_filter = 0
+      net.ipv4.conf.default.rp_filter = 0
+
+- name: Apply sysctl settings
+  command: sysctl --system
+  changed_when: true
+
+- name: Configure FRR daemons
+  template:
+    src: daemons.j2
+    dest: /etc/frr/daemons
+    owner: frr
+    group: frr
+    mode: "0640"
+
+- name: Configure OSPF
+  template:
+    src: frr.conf.j2
+    dest: /etc/frr/frr.conf
+    owner: frr
+    group: frr
+    mode: "0640"
+
+- name: Restart and enable FRR
+  service:
+    name: frr
+    state: restarted
+    enabled: true

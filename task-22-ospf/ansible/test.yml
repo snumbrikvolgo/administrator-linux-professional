@@ -1,0 +1,83 @@
+---
+- name: Test OSPF convergence
+  hosts: routers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check FRR service
+      command: systemctl is-active frr
+      register: frr_status
+      changed_when: false
+      failed_when: frr_status.stdout.strip() != "active"
+
+    - name: Check OSPF routes
+      command: vtysh -c "show ip route ospf"
+      register: ospf_routes
+      changed_when: false
+      failed_when: "'O>*' not in ospf_routes.stdout"
+
+    - name: Ping router1 local network
+      command: ping -c 2 -W 2 192.168.10.1
+      changed_when: false
+      when: inventory_hostname != "router1"
+
+    - name: Ping router2 local network
+      command: ping -c 2 -W 2 192.168.20.1
+      changed_when: false
+      when: inventory_hostname != "router2"
+
+    - name: Ping router3 local network
+      command: ping -c 2 -W 2 192.168.30.1
+      changed_when: false
+      when: inventory_hostname != "router3"
+
+- name: Test expensive symmetric link path
+  hosts: router1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Trace route from router1 to router2 local network through router3
+      command: traceroute -n 192.168.20.1
+      register: trace_to_r2
+      changed_when: false
+      failed_when: "'10.0.12.2' not in trace_to_r2.stdout"
+
+    - name: Trace route from router2 to router1 local network through router3
+      command: traceroute -n 192.168.10.1
+      register: trace_to_r1
+      changed_when: false
+      failed_when: "'10.0.11.1' not in trace_to_r1.stdout"
+      delegate_to: router2
+
+- name: Test asymmetric routing scenario
+  hosts: router1
+  become: true
+  gather_facts: false
+  tasks:
+    - block:
+        - name: Temporarily make router2 to router1 link cheap
+          command: vtysh -c "configure terminal" -c "interface eth1" -c "ip ospf cost 100" -c "end"
+          changed_when: true
+          delegate_to: router2
+
+        - name: Wait for OSPF recalculation
+          pause:
+            seconds: 10
+
+        - name: Check router1 still reaches router2 through router3
+          command: traceroute -n 192.168.20.1
+          register: asymmetric_forward
+          changed_when: false
+          failed_when: "'10.0.12.2' not in asymmetric_forward.stdout"
+
+        - name: Check router2 returns to router1 directly
+          command: ip route get 192.168.10.1
+          register: asymmetric_return
+          changed_when: false
+          failed_when: "'via 10.0.10.1' not in asymmetric_return.stdout or 'dev eth1' not in asymmetric_return.stdout"
+          delegate_to: router2
+      always:
+        - name: Restore expensive router2 to router1 link
+          command: vtysh -c "configure terminal" -c "interface eth1" -c "ip ospf cost 1000" -c "end"
+          changed_when: true
+          delegate_to: router2
