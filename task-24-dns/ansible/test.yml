@@ -1,0 +1,109 @@
+---
+- name: Verify split DNS from client
+  hosts: client
+  become: true
+  gather_facts: false
+  tasks:
+    - name: client sees web1.dns.lab
+      command: dig +short web1.dns.lab
+      register: client_web1
+      changed_when: false
+      failed_when: "'192.168.90.15' not in client_web1.stdout_lines"
+
+    - name: client does not see web2.dns.lab
+      command: dig +short web2.dns.lab
+      register: client_web2
+      changed_when: false
+      failed_when: client_web2.stdout | length > 0
+
+    - name: client sees newdns.lab with both web clients
+      command: dig +short www.newdns.lab
+      register: client_www
+      changed_when: false
+      failed_when: "'192.168.90.15' not in client_www.stdout_lines or '192.168.90.16' not in client_www.stdout_lines"
+
+- name: Verify split DNS from client through slave
+  hosts: client
+  become: true
+  gather_facts: false
+  tasks:
+    - name: client sees web1.dns.lab through ns02
+      command: dig @192.168.90.11 +short web1.dns.lab
+      register: client_slave_web1
+      changed_when: false
+      failed_when: "'192.168.90.15' not in client_slave_web1.stdout_lines"
+
+    - name: client does not see web2.dns.lab through ns02
+      command: dig @192.168.90.11 +short web2.dns.lab
+      register: client_slave_web2
+      changed_when: false
+      failed_when: client_slave_web2.stdout | length > 0
+
+    - name: client sees newdns.lab through ns02
+      command: dig @192.168.90.11 +short www.newdns.lab
+      register: client_slave_www
+      changed_when: false
+      failed_when: "'192.168.90.15' not in client_slave_www.stdout_lines or '192.168.90.16' not in client_slave_www.stdout_lines"
+
+- name: Verify split DNS from client2
+  hosts: client2
+  become: true
+  gather_facts: false
+  tasks:
+    - name: client2 sees web1.dns.lab
+      command: dig +short web1.dns.lab
+      register: client2_web1
+      changed_when: false
+      failed_when: "'192.168.90.15' not in client2_web1.stdout_lines"
+
+    - name: client2 sees web2.dns.lab
+      command: dig +short web2.dns.lab
+      register: client2_web2
+      changed_when: false
+      failed_when: "'192.168.90.16' not in client2_web2.stdout_lines"
+
+    - name: client2 does not see newdns.lab
+      command: dig +short www.newdns.lab
+      register: client2_www
+      changed_when: false
+      failed_when: client2_www.stdout | length > 0
+
+- name: Verify split DNS from client2 through slave
+  hosts: client2
+  become: true
+  gather_facts: false
+  tasks:
+    - name: client2 sees web1.dns.lab through ns02
+      command: dig @192.168.90.11 +short web1.dns.lab
+      register: client2_slave_web1
+      changed_when: false
+      failed_when: "'192.168.90.15' not in client2_slave_web1.stdout_lines"
+
+    - name: client2 sees web2.dns.lab through ns02
+      command: dig @192.168.90.11 +short web2.dns.lab
+      register: client2_slave_web2
+      changed_when: false
+      failed_when: "'192.168.90.16' not in client2_slave_web2.stdout_lines"
+
+    - name: client2 does not see newdns.lab through ns02
+      command: dig @192.168.90.11 +short www.newdns.lab
+      register: client2_slave_www
+      changed_when: false
+      failed_when: client2_slave_www.stdout | length > 0
+
+- name: Verify SELinux is enabled and enforcing
+  hosts: dns_servers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check SELinux mode
+      command: getenforce
+      register: selinux_mode
+      changed_when: false
+      failed_when: selinux_mode.stdout != "Enforcing"
+
+    - name: Check named service
+      command: systemctl is-active named
+      register: named_state
+      changed_when: false
+      failed_when: named_state.stdout != "active"

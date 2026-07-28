@@ -1,0 +1,47 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+MACHINES = {
+  :ns01 => { :hostname => "ns01", :ip => "192.168.90.10", :memory => 512 },
+  :ns02 => { :hostname => "ns02", :ip => "192.168.90.11", :memory => 512 },
+  :client => { :hostname => "client", :ip => "192.168.90.15", :memory => 384 },
+  :client2 => { :hostname => "client2", :ip => "192.168.90.16", :memory => 384 }
+}.freeze
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "centos/7"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.boot_timeout = 1200
+  config.ssh.insert_key = false
+  config.ssh.keep_alive = true
+
+  MACHINES.each_with_index do |(name, machine), index|
+    config.vm.define name do |box|
+      box.vm.hostname = machine[:hostname]
+      box.vm.network "forwarded_port",
+        id: "ssh",
+        guest: 22,
+        host: 2390 + index,
+        host_ip: "0.0.0.0",
+        auto_correct: false
+      box.ssh.host = ENV.fetch("VAGRANT_WSL_HOST_IP", "127.0.0.1")
+
+      box.vm.network "private_network",
+        ip: machine[:ip],
+        netmask: "255.255.255.0"
+
+      box.vm.provision "shell", inline: <<-SHELL
+        set -eux
+        sed -i 's/^mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/CentOS-Base.repo
+        sed -i 's|^#baseurl=http://mirror.centos.org/centos/$releasever|baseurl=http://vault.centos.org/7.9.2009|g' /etc/yum.repos.d/CentOS-Base.repo
+        yum makecache -y
+      SHELL
+
+      box.vm.provider "virtualbox" do |vb|
+        vb.name = "task-24-#{name}"
+        vb.memory = machine[:memory]
+        vb.cpus = 1
+      end
+    end
+  end
+end

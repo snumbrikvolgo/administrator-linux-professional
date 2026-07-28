@@ -1,0 +1,111 @@
+options {
+  listen-on port 53 { 127.0.0.1; 192.168.90.10; };
+  listen-on-v6 port 53 { ::1; };
+  directory "/var/named";
+  dump-file "/var/named/data/cache_dump.db";
+  statistics-file "/var/named/data/named_stats.txt";
+  memstatistics-file "/var/named/data/named_mem_stats.txt";
+  recursion yes;
+  allow-query { any; };
+  allow-transfer { any; };
+  dnssec-enable yes;
+  dnssec-validation yes;
+};
+
+logging {
+  channel default_debug {
+    file "data/named.run";
+    severity dynamic;
+  };
+};
+
+key "zonetransfer.key" {
+  algorithm hmac-sha256;
+  secret "dGFzay0yNC16b25lLXRyYW5zZmVyLWtleQ==";
+};
+
+key "client-key" {
+  algorithm hmac-sha256;
+  secret "Y2xpZW50LXNwbGl0LWRucy1rZXktMjQ=";
+};
+
+key "client2-key" {
+  algorithm hmac-sha256;
+  secret "Y2xpZW50Mi1zcGxpdC1kbnMta2V5LTI0";
+};
+
+acl client { !key client2-key; key client-key; 192.168.90.15; };
+acl client2 { !key client-key; key client2-key; 192.168.90.16; };
+
+server 192.168.90.11 {
+  keys { "zonetransfer.key"; };
+};
+
+view "client" {
+  match-clients { client; };
+
+  zone "dns.lab" {
+    type master;
+    file "/var/named/named.dns.lab.client";
+    also-notify { 192.168.90.11 key client-key; };
+  };
+
+  zone "newdns.lab" {
+    type master;
+    file "/var/named/named.newdns.lab";
+    also-notify { 192.168.90.11 key client-key; };
+  };
+};
+
+view "client2" {
+  match-clients { client2; };
+
+  zone "dns.lab" {
+    type master;
+    file "/var/named/named.dns.lab";
+    also-notify { 192.168.90.11 key client2-key; };
+  };
+
+  zone "90.168.192.in-addr.arpa" {
+    type master;
+    file "/var/named/named.dns.lab.rev";
+    also-notify { 192.168.90.11 key client2-key; };
+  };
+};
+
+view "default" {
+  match-clients { any; };
+
+  zone "." IN {
+    type hint;
+    file "named.ca";
+  };
+
+  include "/etc/named.rfc1912.zones";
+  include "/etc/named.root.key";
+
+  zone "dns.lab" {
+    type master;
+    allow-transfer { key "zonetransfer.key"; };
+    file "/var/named/named.dns.lab";
+  };
+
+  zone "90.168.192.in-addr.arpa" {
+    type master;
+    allow-transfer { key "zonetransfer.key"; };
+    file "/var/named/named.dns.lab.rev";
+  };
+
+  zone "ddns.lab" {
+    type master;
+    allow-transfer { key "zonetransfer.key"; };
+    allow-update { key "zonetransfer.key"; };
+    file "/var/named/named.ddns.lab";
+  };
+
+  zone "newdns.lab" {
+    type master;
+    allow-transfer { key "zonetransfer.key"; };
+    file "/var/named/named.newdns.lab";
+  };
+};

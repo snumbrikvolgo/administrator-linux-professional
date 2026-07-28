@@ -1,0 +1,107 @@
+---
+- name: Prepare DNS lab hosts
+  hosts: all_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install DNS packages
+      yum:
+        name:
+          - bind
+          - bind-utils
+          - chrony
+        state: present
+        update_cache: true
+
+    - name: Start chronyd
+      service:
+        name: chronyd
+        state: started
+        enabled: true
+
+    - name: Set lab resolver
+      template:
+        src: resolv.conf.j2
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+- name: Configure master DNS server
+  hosts: ns01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Copy master named.conf
+      template:
+        src: master-named.conf.j2
+        dest: /etc/named.conf
+        owner: root
+        group: named
+        mode: "0640"
+
+    - name: Copy master zones
+      copy:
+        src: "{{ item }}"
+        dest: /var/named/
+        owner: root
+        group: named
+        mode: "0660"
+      loop:
+        - named.dns.lab
+        - named.dns.lab.client
+        - named.dns.lab.rev
+        - named.ddns.lab
+        - named.newdns.lab
+
+    - name: Restore SELinux contexts on master DNS files
+      command: restorecon -Rv /etc/named.conf /var/named
+      register: master_restorecon
+      changed_when: master_restorecon.stdout | length > 0
+
+    - name: Check master config
+      command: named-checkconf /etc/named.conf
+      changed_when: false
+
+    - name: Check master zones
+      command: "named-checkzone {{ item.zone }} /var/named/{{ item.file }}"
+      loop:
+        - { zone: "dns.lab", file: "named.dns.lab" }
+        - { zone: "dns.lab", file: "named.dns.lab.client" }
+        - { zone: "newdns.lab", file: "named.newdns.lab" }
+        - { zone: "90.168.192.in-addr.arpa", file: "named.dns.lab.rev" }
+      changed_when: false
+
+    - name: Start master DNS
+      service:
+        name: named
+        state: restarted
+        enabled: true
+
+- name: Configure slave DNS server
+  hosts: ns02
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Copy slave named.conf
+      template:
+        src: slave-named.conf.j2
+        dest: /etc/named.conf
+        owner: root
+        group: named
+        mode: "0640"
+
+    - name: Restore SELinux contexts on slave DNS files
+      command: restorecon -Rv /etc/named.conf /var/named
+      register: slave_restorecon
+      changed_when: slave_restorecon.stdout | length > 0
+
+    - name: Check slave config
+      command: named-checkconf /etc/named.conf
+      changed_when: false
+
+    - name: Start slave DNS
+      service:
+        name: named
+        state: restarted
+        enabled: true

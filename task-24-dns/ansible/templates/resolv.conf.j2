@@ -1,0 +1,9 @@
+search dns.lab newdns.lab
+{% if inventory_hostname == "ns01" %}
+nameserver 192.168.90.10
+{% elif inventory_hostname == "ns02" %}
+nameserver 192.168.90.11
+{% else %}
+nameserver 192.168.90.10
+nameserver 192.168.90.11
+{% endif %}
