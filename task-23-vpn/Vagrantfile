@@ -1,0 +1,57 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+MACHINES = {
+  :server => {
+    :box_name => "generic/ubuntu2004",
+    :hostname => "server",
+    :memory => 768,
+    :cpus => 1,
+    :mgmt_ip => "192.168.80.10"
+  },
+  :client => {
+    :box_name => "generic/ubuntu2004",
+    :hostname => "client",
+    :memory => 768,
+    :cpus => 1,
+    :mgmt_ip => "192.168.80.20"
+  }
+}.freeze
+
+Vagrant.configure("2") do |config|
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.boot_timeout = 1200
+  config.ssh.insert_key = false
+  config.ssh.keep_alive = true
+
+  MACHINES.each_with_index do |(name, machine), index|
+    config.vm.define name do |box|
+      box.vm.box = machine[:box_name]
+      box.vm.hostname = machine[:hostname]
+      box.vm.network "forwarded_port",
+        id: "ssh",
+        guest: 22,
+        host: 2380 + index,
+        host_ip: "0.0.0.0",
+        auto_correct: false
+      box.ssh.host = ENV.fetch("VAGRANT_WSL_HOST_IP", "127.0.0.1")
+
+      box.vm.network "private_network",
+        ip: machine[:mgmt_ip],
+        adapter: 8,
+        netmask: "255.255.255.0"
+
+      box.vm.provision "shell", inline: <<-SHELL
+        set -eux
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 sudo
+      SHELL
+
+      box.vm.provider "virtualbox" do |vb|
+        vb.name = "task-23-#{name}"
+        vb.memory = machine[:memory]
+        vb.cpus = machine[:cpus]
+      end
+    end
+  end
+end

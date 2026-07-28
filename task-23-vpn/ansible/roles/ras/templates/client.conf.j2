@@ -1,0 +1,14 @@
+dev tun
+proto udp
+remote 192.168.80.10 1207
+client
+resolv-retry infinite
+remote-cert-tls server
+ca ./ca.crt
+cert ./client.crt
+key ./client.key
+route 192.168.80.0 255.255.255.0
+persist-key
+persist-tun
+comp-lzo
+verb 3

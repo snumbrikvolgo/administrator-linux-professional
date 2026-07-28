@@ -1,0 +1,120 @@
+---
+- name: Create OpenVPN client config directory
+  file:
+    path: /etc/openvpn/client
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Initialize Easy-RSA PKI
+  command: /usr/share/easy-rsa/easyrsa init-pki
+  args:
+    chdir: /etc/openvpn
+    creates: /etc/openvpn/pki
+  environment:
+    EASYRSA_BATCH: "1"
+
+- name: Build local CA
+  command: /usr/share/easy-rsa/easyrsa build-ca nopass
+  args:
+    chdir: /etc/openvpn
+    creates: /etc/openvpn/pki/ca.crt
+  environment:
+    EASYRSA_BATCH: "1"
+    EASYRSA_REQ_CN: rasvpn-ca
+
+- name: Generate server request
+  command: /usr/share/easy-rsa/easyrsa gen-req server nopass
+  args:
+    chdir: /etc/openvpn
+    creates: /etc/openvpn/pki/private/server.key
+  environment:
+    EASYRSA_BATCH: "1"
+    EASYRSA_REQ_CN: server
+
+- name: Sign server certificate
+  command: /usr/share/easy-rsa/easyrsa sign-req server server
+  args:
+    chdir: /etc/openvpn
+    creates: /etc/openvpn/pki/issued/server.crt
+  environment:
+    EASYRSA_BATCH: "1"
+
+- name: Generate Diffie-Hellman parameters
+  command: /usr/share/easy-rsa/easyrsa gen-dh
+  args:
+    chdir: /etc/openvpn
+    creates: /etc/openvpn/pki/dh.pem
+  environment:
+    EASYRSA_BATCH: "1"
+
+- name: Generate client request
+  command: /usr/share/easy-rsa/easyrsa gen-req client nopass
+  args:
+    chdir: /etc/openvpn
+    creates: /etc/openvpn/pki/private/client.key
+  environment:
+    EASYRSA_BATCH: "1"
+    EASYRSA_REQ_CN: client
+
+- name: Sign client certificate
+  command: /usr/share/easy-rsa/easyrsa sign-req client client
+  args:
+    chdir: /etc/openvpn
+    creates: /etc/openvpn/pki/issued/client.crt
+  environment:
+    EASYRSA_BATCH: "1"
+
+- name: Install RAS client iroute
+  copy:
+    dest: /etc/openvpn/client/client
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      iroute 10.20.20.0 255.255.255.0
+
+- name: Install RAS server configuration
+  template:
+    src: ras-server.conf.j2
+    dest: /etc/openvpn/ras.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create host-side RAS client bundle on VM
+  file:
+    path: /home/vagrant/ras-client
+    state: directory
+    owner: vagrant
+    group: vagrant
+    mode: "0755"
+
+- name: Copy RAS client bundle files
+  copy:
+    remote_src: true
+    src: "{{ item.src }}"
+    dest: "/home/vagrant/ras-client/{{ item.dest }}"
+    owner: vagrant
+    group: vagrant
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: /etc/openvpn/pki/ca.crt, dest: ca.crt, mode: "0644" }
+    - { src: /etc/openvpn/pki/issued/client.crt, dest: client.crt, mode: "0644" }
+    - { src: /etc/openvpn/pki/private/client.key, dest: client.key, mode: "0600" }
+
+- name: Install RAS client config into bundle
+  template:
+    src: client.conf.j2
+    dest: /home/vagrant/ras-client/client.conf
+    owner: vagrant
+    group: vagrant
+    mode: "0644"
+
+- name: Start RAS OpenVPN server
+  systemd:
+    name: openvpn@ras
+    state: started
+    enabled: true
+    daemon_reload: true

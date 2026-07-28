@@ -1,0 +1,15 @@
+---
+- name: Configure OpenVPN lab
+  hosts: vpn
+  become: true
+  gather_facts: true
+  roles:
+    - common
+    - site_to_site
+
+- name: Configure OpenVPN RAS server
+  hosts: ras_server
+  become: true
+  gather_facts: true
+  roles:
+    - ras

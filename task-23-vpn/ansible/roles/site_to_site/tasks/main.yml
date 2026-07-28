@@ -1,0 +1,107 @@
+---
+- name: Create OpenVPN directory
+  file:
+    path: /etc/openvpn
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create static site-to-site key on server
+  command: openvpn --genkey --secret /etc/openvpn/static.key
+  args:
+    creates: /etc/openvpn/static.key
+  when: vpn_role == 'server'
+
+- name: Read static site-to-site key from server
+  slurp:
+    src: /etc/openvpn/static.key
+  register: static_key
+  when: vpn_role == 'server'
+
+- name: Store static key as fact for all hosts
+  set_fact:
+    openvpn_static_key: "{{ hostvars[groups['ras_server'][0]].static_key.content }}"
+
+- name: Install static site-to-site key
+  copy:
+    content: "{{ openvpn_static_key | b64decode }}"
+    dest: /etc/openvpn/static.key
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install default TAP site-to-site configuration
+  template:
+    src: site.conf.j2
+    dest: /etc/openvpn/site.conf
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    vpn_mode: tap
+  notify: Restart openvpn site
+
+- name: Install TAP test configuration
+  template:
+    src: site.conf.j2
+    dest: /etc/openvpn/site-tap.conf
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    vpn_mode: tap
+
+- name: Install TUN test configuration
+  template:
+    src: site.conf.j2
+    dest: /etc/openvpn/site-tun.conf
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    vpn_mode: tun
+
+- name: Install OpenVPN instance unit
+  template:
+    src: openvpn-instance.service.j2
+    dest: /etc/systemd/system/openvpn@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart openvpn site
+
+- name: Start default TAP site-to-site VPN
+  systemd:
+    name: openvpn@site
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Install site VPN switch helper
+  copy:
+    dest: /usr/local/sbin/openvpn-site-mode
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      mode="${1:-tap}"
+      if [[ "$mode" != "tap" && "$mode" != "tun" ]]; then
+        echo "Usage: openvpn-site-mode tap|tun" >&2
+        exit 2
+      fi
+      cp "/etc/openvpn/site-${mode}.conf" /etc/openvpn/site.conf
+      systemctl restart openvpn@site
+
+- name: Flush handlers
+  meta: flush_handlers
+
+- name: Wait for site-to-site tunnel address
+  command: ping -c 3 -W 2 "{{ '10.10.10.2' if vpn_role == 'server' else '10.10.10.1' }}"
+  register: site_ping
+  changed_when: false
+  retries: 6
+  delay: 5
+  until: site_ping.rc == 0

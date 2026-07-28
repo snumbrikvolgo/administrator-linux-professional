@@ -1,0 +1,112 @@
+---
+- name: Test site-to-site OpenVPN modes
+  hosts: vpn
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stop old iperf3 servers
+      command: pkill iperf3
+      changed_when: false
+      failed_when: false
+
+    - name: Switch site VPN to TAP
+      command: /usr/local/sbin/openvpn-site-mode tap
+
+    - name: Wait for TAP tunnel
+      command: ping -c 3 -W 2 "{{ '10.10.10.2' if vpn_role == 'server' else '10.10.10.1' }}"
+      register: tap_ping
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: tap_ping.rc == 0
+
+    - name: Start iperf3 server for TAP
+      command: iperf3 -s -D --logfile /tmp/iperf3-tap-server.log
+      changed_when: false
+      when: vpn_role == 'server'
+
+    - name: Give TAP iperf3 server time to listen
+      pause:
+        seconds: 2
+
+    - name: Measure TAP throughput
+      command: iperf3 -c 10.10.10.1 -t 10 -i 5
+      register: tap_iperf
+      changed_when: false
+      when: vpn_role == 'client'
+
+    - name: Stop TAP iperf3 server
+      command: pkill iperf3
+      changed_when: false
+      failed_when: false
+
+    - name: Switch site VPN to TUN
+      command: /usr/local/sbin/openvpn-site-mode tun
+
+    - name: Wait for TUN tunnel
+      command: ping -c 3 -W 2 "{{ '10.10.10.2' if vpn_role == 'server' else '10.10.10.1' }}"
+      register: tun_ping
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: tun_ping.rc == 0
+
+    - name: Start iperf3 server for TUN
+      command: iperf3 -s -D --logfile /tmp/iperf3-tun-server.log
+      changed_when: false
+      when: vpn_role == 'server'
+
+    - name: Give TUN iperf3 server time to listen
+      pause:
+        seconds: 2
+
+    - name: Measure TUN throughput
+      command: iperf3 -c 10.10.10.1 -t 10 -i 5
+      register: tun_iperf
+      changed_when: false
+      when: vpn_role == 'client'
+
+    - name: Show throughput results
+      debug:
+        msg:
+          - "TAP iperf3 result:"
+          - "{{ tap_iperf.stdout_lines | default([]) }}"
+          - "TUN iperf3 result:"
+          - "{{ tun_iperf.stdout_lines | default([]) }}"
+      when: vpn_role == 'client'
+
+    - name: Return default site VPN to TAP
+      command: /usr/local/sbin/openvpn-site-mode tap
+
+- name: Test RAS OpenVPN server locally
+  hosts: server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stop previous test RAS client
+      shell: pgrep -f '[o]penvpn --config /home/vagrant/ras-client/client.conf' | xargs -r kill
+      changed_when: false
+      failed_when: false
+
+    - name: Start RAS client from generated bundle
+      shell: nohup openvpn --config /home/vagrant/ras-client/client.conf >/tmp/openvpn-ras-client.log 2>&1 &
+      changed_when: false
+
+    - name: Wait for RAS tunnel address
+      command: ping -c 4 -W 2 10.20.20.1
+      register: ras_ping
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: ras_ping.rc == 0
+
+    - name: Show RAS route table fragment
+      command: ip route
+      register: ras_routes
+      changed_when: false
+
+    - name: Print RAS verification
+      debug:
+        msg:
+          - "RAS ping to 10.20.20.1 succeeded"
+          - "{{ ras_routes.stdout_lines }}"

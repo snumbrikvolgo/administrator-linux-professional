@@ -1,0 +1,17 @@
+port 1194
+proto udp
+dev {{ vpn_mode | default('tap') }}
+{% if vpn_role == 'client' %}
+remote 192.168.80.10
+{% endif %}
+ifconfig {{ '10.10.10.1 255.255.255.0' if vpn_role == 'server' else '10.10.10.2 255.255.255.0' }}
+topology subnet
+{% if vpn_role == 'client' %}
+route 192.168.80.0 255.255.255.0
+{% endif %}
+secret /etc/openvpn/static.key
+comp-lzo
+status /var/log/openvpn-site-status.log
+log /var/log/openvpn-site.log
+verb 3
+explicit-exit-notify 1
