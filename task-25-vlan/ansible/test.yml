@@ -1,0 +1,45 @@
+---
+- name: Test VLAN connectivity
+  hosts: vlan_hosts
+  gather_facts: false
+  tasks:
+    - name: Ping peer inside the same VLAN
+      command: ping -c 4 -W 2 10.10.10.{{ '1' if 'Client' in inventory_hostname else '254' }}
+      register: vlan_ping
+      changed_when: false
+
+    - name: Show VLAN ping result
+      debug:
+        var: vlan_ping.stdout_lines
+
+- name: Test bond failover
+  hosts: inetRouter
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check bond0 connectivity before failover
+      command: ping -c 4 -W 2 192.168.255.2
+      changed_when: false
+
+    - name: Check connectivity while one slave is disabled
+      block:
+        - name: Disable one bond slave on centralRouter
+          command: ip link set eth1 down
+          delegate_to: centralRouter
+          become: true
+          changed_when: true
+
+        - name: Check bond0 connectivity after disabling eth1
+          command: ping -c 4 -W 2 192.168.255.2
+          register: bond_ping
+          changed_when: false
+      always:
+        - name: Enable disabled bond slave on centralRouter
+          command: ip link set eth1 up
+          delegate_to: centralRouter
+          become: true
+          changed_when: true
+
+    - name: Show bond failover ping result
+      debug:
+        var: bond_ping.stdout_lines

@@ -1,0 +1,114 @@
+---
+- name: Base setup
+  hosts: all
+  become: true
+  tasks:
+    - name: Install tools on CentOS
+      yum:
+        name:
+          - vim
+          - traceroute
+          - tcpdump
+          - net-tools
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Install tools on Ubuntu
+      apt:
+        name:
+          - vim
+          - traceroute
+          - tcpdump
+          - net-tools
+        state: present
+      register: ubuntu_tools
+      failed_when: false
+      when: ansible_os_family == "Debian"
+
+    - name: Show Ubuntu package warning
+      debug:
+        msg: "Optional tools were not installed because apt repositories are unavailable: {{ ubuntu_tools.msg }}"
+      when:
+        - ansible_os_family == "Debian"
+        - ubuntu_tools is failed
+
+- name: Configure VLAN 1 on CentOS hosts
+  hosts: vlan1
+  become: true
+  tasks:
+    - name: Deploy VLAN interface config
+      template:
+        src: ifcfg-vlan.j2
+        dest: /etc/sysconfig/network-scripts/ifcfg-vlan{{ vlan_id }}
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Restart NetworkManager for VLAN 1
+      service:
+        name: NetworkManager
+        state: restarted
+
+- name: Configure VLAN 2 on Ubuntu hosts
+  hosts: vlan2
+  become: true
+  tasks:
+    - name: Disable cloud-init network rendering
+      copy:
+        dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+        content: "network: {config: disabled}\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Deploy netplan config with VLAN
+      template:
+        src: netplan-vlan.yaml.j2
+        dest: /etc/netplan/50-vagrant-vlan.yaml
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Apply netplan config
+      command: netplan apply
+      changed_when: true
+
+- name: Configure active-backup bond between inetRouter and centralRouter
+  hosts: inetRouter,centralRouter
+  become: true
+  tasks:
+    - name: Deploy bond0 config
+      template:
+        src: ifcfg-bond0.j2
+        dest: /etc/sysconfig/network-scripts/ifcfg-bond0
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Deploy bond slave configs
+      template:
+        src: ifcfg-bond-slave.j2
+        dest: /etc/sysconfig/network-scripts/ifcfg-{{ item }}
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - eth1
+        - eth2
+
+    - name: Restart hosts to activate bond reliably
+      reboot:
+        reboot_timeout: 3600
+
+    - name: Wait for SSH after reboot
+      wait_for_connection:
+        timeout: 300
+
+    - name: Read bond state
+      command: cat /proc/net/bonding/bond0
+      register: bond_state
+      changed_when: false
+
+    - name: Show bond state
+      debug:
+        var: bond_state.stdout_lines
