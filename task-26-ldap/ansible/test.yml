@@ -1,0 +1,52 @@
+---
+- name: Verify FreeIPA server
+  hosts: ipa_server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check FreeIPA API status
+      command: ipactl status
+      changed_when: false
+
+    - name: Check firewall is active on server
+      command: firewall-cmd --state
+      register: server_firewall
+      changed_when: false
+      failed_when: server_firewall.stdout != "running"
+
+    - name: Check Kerberos ticket for admin
+      shell: "echo {{ ipa_admin_password | quote }} | kinit admin && klist"
+      changed_when: false
+
+    - name: Check test user exists in IPA
+      command: ipa user-show {{ ldap_test_user }}
+      changed_when: false
+
+- name: Verify FreeIPA clients
+  hosts: ipa_clients
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check client can resolve LDAP user through SSSD
+      command: getent passwd {{ ldap_test_user }}
+      register: getent_user
+      changed_when: false
+      failed_when: ldap_test_user not in getent_user.stdout
+
+    - name: Check SSH public key is visible through SSSD
+      command: sss_ssh_authorizedkeys {{ ldap_test_user }}
+      register: sss_key
+      changed_when: false
+      failed_when: "'otus-user@otus-lab' not in sss_key.stdout"
+
+    - name: Check firewall is active on client
+      command: firewall-cmd --state
+      register: client_firewall
+      changed_when: false
+      failed_when: client_firewall.stdout != "running"
+
+    - name: Check home directory can be created for LDAP user
+      command: su - {{ ldap_test_user }} -c 'pwd'
+      register: ldap_home
+      changed_when: false
+      failed_when: "'/home/' + ldap_test_user not in ldap_home.stdout"

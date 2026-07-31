@@ -1,0 +1,236 @@
+---
+- name: Prepare LDAP lab hosts
+  hosts: ldap_lab
+  become: true
+  tasks:
+    - name: Set timezone
+      command: timedatectl set-timezone Europe/Moscow
+      changed_when: false
+
+    - name: Configure hosts file
+      template:
+        src: hosts.j2
+        dest: /etc/hosts
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install common packages
+      dnf:
+        name:
+          - chrony
+          - firewalld
+          - vim
+        state: present
+
+    - name: Enable chronyd and firewalld
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - chronyd
+        - firewalld
+
+    - name: Keep SELinux enforcing in config
+      lineinfile:
+        path: /etc/selinux/config
+        regexp: "^SELINUX="
+        line: "SELINUX=enforcing"
+
+    - name: Keep SELinux enforcing now
+      command: setenforce 1
+      changed_when: false
+      failed_when: false
+
+    - name: Persist IPv6 loopback enablement
+      lineinfile:
+        path: /etc/sysctl.conf
+        regexp: "^net.ipv6.conf.lo.disable_ipv6"
+        line: "net.ipv6.conf.lo.disable_ipv6 = 0"
+
+    - name: Enable IPv6 on loopback now
+      command: sysctl -w net.ipv6.conf.lo.disable_ipv6=0
+      changed_when: false
+
+    - name: Check IPv6 loopback address
+      command: ip -6 addr show dev lo scope host
+      register: loopback_ipv6
+      changed_when: false
+
+    - name: Add IPv6 loopback address when missing
+      command: ip -6 addr add ::1/128 dev lo
+      when: "'::1/128' not in loopback_ipv6.stdout"
+
+- name: Install and configure FreeIPA server
+  hosts: ipa_server
+  become: true
+  tasks:
+    - name: Enable IdM module
+      command: dnf module enable -y idm:DL1
+      args:
+        creates: /etc/dnf/modules.d/idm.module
+
+    - name: Install FreeIPA server packages
+      dnf:
+        name:
+          - ipa-server
+          - ipa-server-dns
+        state: present
+
+    - name: Create pki-tomcat systemd override directory
+      file:
+        path: /etc/systemd/system/pki-tomcatd@pki-tomcat.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Allow slow FreeIPA CA startup on small lab hosts
+      copy:
+        dest: /etc/systemd/system/pki-tomcatd@pki-tomcat.service.d/timeout.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          TimeoutStartSec=900
+
+    - name: Reload systemd after pki-tomcat override
+      command: systemctl daemon-reload
+      changed_when: false
+
+    - name: Open FreeIPA services in firewall
+      command: firewall-cmd --permanent --add-service={{ item }}
+      register: ipa_firewall_service
+      changed_when: "'success' in ipa_firewall_service.stdout"
+      loop:
+        - freeipa-ldap
+        - freeipa-ldaps
+        - kerberos
+        - kpasswd
+        - dns
+        - http
+        - https
+        - ntp
+
+    - name: Reload FreeIPA firewall rules
+      command: firewall-cmd --reload
+      changed_when: false
+
+    - name: Check if FreeIPA server is already installed
+      stat:
+        path: /etc/ipa/default.conf
+      register: ipa_default_conf
+
+    - name: Install FreeIPA server
+      command: >
+        ipa-server-install
+        --unattended
+        --hostname={{ ipa_server_fqdn }}
+        --domain={{ ipa_domain }}
+        --realm={{ ipa_realm }}
+        --ds-password={{ ipa_dm_password }}
+        --admin-password={{ ipa_admin_password }}
+        --no-ntp
+        --setup-dns
+        --no-forwarders
+        --auto-reverse
+      when: not ipa_default_conf.stat.exists
+
+    - name: Create Kerberos ticket for admin
+      shell: "echo {{ ipa_admin_password | quote }} | kinit admin"
+      changed_when: false
+
+    - name: Read test SSH public key
+      slurp:
+        src: "{{ playbook_dir }}/files/otus-user.pub"
+      delegate_to: localhost
+      become: false
+      register: otus_user_pubkey
+
+    - name: Check test user
+      command: ipa user-show {{ ldap_test_user }}
+      register: ipa_user_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create test user
+      shell: |
+        set -o pipefail
+        printf '%s\n%s\n' {{ ldap_test_password | quote }} {{ ldap_test_password | quote }} |
+        ipa user-add {{ ldap_test_user }} --first=Otus --last=User --shell=/bin/bash --password
+      args:
+        executable: /bin/bash
+      when: ipa_user_check.rc != 0
+
+    - name: Add SSH public key to test user
+      shell: >
+        ipa user-mod {{ ldap_test_user }}
+        --sshpubkey='{{ otus_user_pubkey.content | b64decode | trim }}'
+      register: ipa_user_key_update
+      changed_when: ipa_user_key_update.rc == 0
+      failed_when:
+        - ipa_user_key_update.rc != 0
+        - "'no modifications to be performed' not in ipa_user_key_update.stderr"
+
+- name: Install and configure FreeIPA clients
+  hosts: ipa_clients
+  become: true
+  tasks:
+    - name: Install FreeIPA client packages
+      dnf:
+        name:
+          - freeipa-client
+          - oddjob-mkhomedir
+        state: present
+
+    - name: Open SSH in firewall
+      command: firewall-cmd --permanent --add-service=ssh
+      register: client_firewall_ssh
+      changed_when: "'success' in client_firewall_ssh.stdout"
+
+    - name: Reload client firewall rules
+      command: firewall-cmd --reload
+      changed_when: false
+
+    - name: Check if client is already enrolled
+      stat:
+        path: /etc/ipa/default.conf
+      register: client_ipa_default_conf
+
+    - name: Enroll client into FreeIPA domain
+      command: >
+        ipa-client-install
+        --unattended
+        --domain={{ ipa_domain }}
+        --realm={{ ipa_realm }}
+        --server={{ ipa_server_fqdn }}
+        --principal=admin
+        --password={{ ipa_admin_password }}
+        --mkhomedir
+        --no-ntp
+        --force-join
+      when: not client_ipa_default_conf.stat.exists
+
+    - name: Enable automatic home directory creation
+      service:
+        name: oddjobd
+        state: started
+        enabled: true
+
+    - name: Enable SSSD SSH authorized keys integration
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        marker: "# {mark} ANSIBLE MANAGED SSSD SSH KEYS"
+        block: |
+          AuthorizedKeysCommandUser nobody
+          AuthorizedKeysCommand /usr/bin/sss_ssh_authorizedkeys
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Restart sshd
+
+  handlers:
+    - name: Restart sshd
+      service:
+        name: sshd
+        state: restarted
