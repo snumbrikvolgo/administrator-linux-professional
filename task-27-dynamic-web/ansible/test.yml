@@ -1,0 +1,43 @@
+---
+- name: Test dynamic web applications
+  hosts: dynamic_web
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Check Django site on nginx port 8081
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8081/
+        return_content: true
+        status_code: 200
+      register: django_site
+      failed_when: "'Django dynamic web app' not in django_site.content"
+
+    - name: Check Node.js site on nginx port 8082
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8082/
+        return_content: true
+        status_code: 200
+      register: node_site
+      failed_when: "'Hello from node js server' not in node_site.content"
+
+    - name: Check WordPress site on nginx port 8083
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8083/
+        return_content: true
+        status_code: 200
+      register: wordpress_site
+      failed_when: "'WordPress' not in wordpress_site.content"
+
+    - name: Check expected compose services are running
+      ansible.builtin.command: docker compose ps --status running --services
+      args:
+        chdir: /opt/dynamic-web
+      register: compose_services
+      changed_when: false
+      failed_when: >
+        'nginx' not in compose_services.stdout_lines or
+        'wordpress' not in compose_services.stdout_lines or
+        'database' not in compose_services.stdout_lines or
+        'app' not in compose_services.stdout_lines or
+        'node' not in compose_services.stdout_lines

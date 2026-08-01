@@ -1,0 +1,78 @@
+services:
+  database:
+    image: mariadb:10.11
+    container_name: dynamicweb-database
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - dbdata:/var/lib/mysql
+    command:
+      - "--performance-schema=OFF"
+      - "--innodb-buffer-pool-size=64M"
+    networks:
+      - app-network
+
+  wordpress:
+    image: wordpress:6.5-fpm-alpine
+    container_name: dynamicweb-wordpress
+    restart: unless-stopped
+    environment:
+      WORDPRESS_DB_HOST: database
+      WORDPRESS_DB_NAME: ${DB_NAME}
+      WORDPRESS_DB_USER: root
+      WORDPRESS_DB_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - wordpress:/var/www/html
+    networks:
+      - app-network
+    depends_on:
+      - database
+
+  app:
+    build: ./python
+    container_name: dynamicweb-django
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: gunicorn --workers=2 --bind=0.0.0.0:8000 mysite.wsgi:application
+    networks:
+      - app-network
+
+  node:
+    image: node:16.13.2-alpine3.15
+    container_name: dynamicweb-node
+    restart: unless-stopped
+    working_dir: /opt/server
+    volumes:
+      - ./node:/opt/server:ro
+    command: node test.js
+    networks:
+      - app-network
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: dynamicweb-nginx
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+      - "8082:8082"
+      - "8083:8083"
+    volumes:
+      - wordpress:/var/www/html:ro
+      - ./nginx-conf:/etc/nginx/conf.d:ro
+    networks:
+      - app-network
+    depends_on:
+      - wordpress
+      - app
+      - node
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  dbdata:
+  wordpress:

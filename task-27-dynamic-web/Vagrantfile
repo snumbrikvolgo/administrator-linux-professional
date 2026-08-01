@@ -1,0 +1,31 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-22.04"
+  config.vm.hostname = "DynamicWeb"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.boot_timeout = 1200
+  config.ssh.insert_key = false
+  config.ssh.keep_alive = true
+
+  config.vm.network "forwarded_port",
+    id: "ssh",
+    guest: 22,
+    host: 2461,
+    host_ip: "0.0.0.0",
+    auto_correct: false
+  config.ssh.host = ENV.fetch("VAGRANT_WSL_HOST_IP", "127.0.0.1")
+
+  config.vm.network "forwarded_port", guest: 8081, host: 8081, host_ip: "127.0.0.1", auto_correct: false
+  config.vm.network "forwarded_port", guest: 8082, host: 8082, host_ip: "127.0.0.1", auto_correct: false
+  config.vm.network "forwarded_port", guest: 8083, host: 8083, host_ip: "127.0.0.1", auto_correct: false
+  config.vm.network "private_network", ip: "192.168.56.20", netmask: "255.255.255.0"
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "task-27-dynamic-web"
+    vb.memory = 4096
+    vb.cpus = 2
+  end
+
+end

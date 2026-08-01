@@ -1,0 +1,123 @@
+---
+- name: Deploy dynamic web applications
+  hosts: dynamic_web
+  become: true
+  gather_facts: true
+
+  vars:
+    project_src: files/project
+    project_dst: /opt/dynamic-web
+
+  tasks:
+    - name: Install Docker repository prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+
+    - name: Create apt keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download Docker apt key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Install Docker and compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+          - python3-docker
+        state: present
+        update_cache: true
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add vagrant user to docker group
+      ansible.builtin.user:
+        name: vagrant
+        groups: docker
+        append: true
+
+    - name: Create project directory
+      ansible.builtin.file:
+        path: "{{ project_dst }}"
+        state: directory
+        owner: vagrant
+        group: vagrant
+        mode: "0755"
+
+    - name: Copy compose project
+      ansible.builtin.copy:
+        src: "{{ project_src }}/"
+        dest: "{{ project_dst }}/"
+        owner: vagrant
+        group: vagrant
+        mode: preserve
+
+    - name: Remove old dynamic web stack
+      ansible.builtin.command: docker compose down -v --remove-orphans
+      args:
+        chdir: "{{ project_dst }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Start dynamic web stack
+      ansible.builtin.command: docker compose up -d --build
+      args:
+        chdir: "{{ project_dst }}"
+      changed_when: true
+
+    - name: Wait for Django site through nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8081/
+        return_content: true
+        status_code: 200
+      register: django_check
+      until: "'Django dynamic web app' in django_check.content"
+      retries: 30
+      delay: 5
+
+    - name: Wait for Node.js site through nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8082/
+        return_content: true
+        status_code: 200
+      register: node_check
+      until: "'Hello from node js server' in node_check.content"
+      retries: 30
+      delay: 5
+
+    - name: Wait for WordPress installer through nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8083/
+        return_content: true
+        status_code: 200
+      register: wordpress_check
+      until: "'WordPress' in wordpress_check.content"
+      retries: 30
+      delay: 5
