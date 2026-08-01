@@ -1,0 +1,17 @@
+[mysqld]
+bind-address = 0.0.0.0
+server-id = {{ mysql_server_id }}
+log_bin = mysql-bin
+binlog_format = ROW
+gtid_mode = ON
+enforce_gtid_consistency = ON
+log_slave_updates = ON
+relay_log = {{ inventory_hostname }}-relay-bin
+skip_name_resolve = ON
+
+{% if mysql_role == 'slave' %}
+read_only = ON
+super_read_only = ON
+replicate-ignore-table = bet.events_on_demand
+replicate-ignore-table = bet.v_same_event
+{% endif %}

@@ -1,0 +1,145 @@
+---
+- name: Install and configure MySQL servers
+  hosts: mysql_servers
+  become: true
+  tasks:
+    - name: Install MySQL and Python driver
+      ansible.builtin.apt:
+        name:
+          - mysql-server
+        state: present
+        update_cache: true
+
+    - name: Remove old replication configuration path
+      ansible.builtin.file:
+        path: /etc/mysql/mysql.conf.d/99-replication.cnf
+        state: absent
+      notify: Restart mysql
+
+    - name: Render replication configuration
+      ansible.builtin.template:
+        src: mysql-replication.cnf.j2
+        dest: /etc/mysql/mysql.conf.d/z99-replication.cnf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart mysql
+
+    - name: Start and enable MySQL
+      ansible.builtin.service:
+        name: mysql
+        state: started
+        enabled: true
+
+    - name: Flush handlers before SQL setup
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart mysql
+      ansible.builtin.service:
+        name: mysql
+        state: restarted
+
+- name: Prepare master database and dump
+  hosts: mysql_master
+  become: true
+  tasks:
+    - name: Copy bet database seed
+      ansible.builtin.copy:
+        src: bet.sql
+        dest: /tmp/bet.sql
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Import bet database on master
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+      args:
+        stdin: "{{ lookup('file', 'files/bet.sql') }}"
+      changed_when: true
+
+    - name: Create replication user
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+      args:
+        stdin: |
+          CREATE USER IF NOT EXISTS '{{ mysql_repl_user }}'@'%' IDENTIFIED BY '{{ mysql_repl_password }}';
+          ALTER USER '{{ mysql_repl_user }}'@'%' IDENTIFIED BY '{{ mysql_repl_password }}';
+          GRANT REPLICATION SLAVE ON *.* TO '{{ mysql_repl_user }}'@'%';
+          FLUSH PRIVILEGES;
+      changed_when: true
+
+    - name: Create master dump without ignored tables
+      ansible.builtin.shell: >
+        mysqldump --all-databases --triggers --routines --single-transaction --set-gtid-purged=ON
+        --ignore-table=bet.events_on_demand --ignore-table=bet.v_same_event
+        -uroot -S /var/run/mysqld/mysqld.sock > /tmp/master.sql
+      changed_when: true
+
+    - name: Fetch master dump to controller
+      ansible.builtin.fetch:
+        src: /tmp/master.sql
+        dest: /tmp/task-28-master.sql
+        flat: true
+
+- name: Configure slave replication
+  hosts: mysql_slave
+  become: true
+  tasks:
+    - name: Copy master dump to slave
+      ansible.builtin.copy:
+        src: /tmp/task-28-master.sql
+        dest: /tmp/master.sql
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Stop replication if it already exists
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock -e "STOP REPLICA;"
+      failed_when: false
+      changed_when: false
+
+    - name: Reset old replication metadata
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock -e "RESET REPLICA ALL;"
+      failed_when: false
+      changed_when: true
+
+    - name: Reset local GTID state before loading master dump
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock -e "RESET MASTER;"
+      changed_when: true
+
+    - name: Allow slave data load before replication starts
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+      args:
+        stdin: |
+          SET GLOBAL super_read_only = OFF;
+          SET GLOBAL read_only = OFF;
+      changed_when: false
+
+    - name: Import master dump on slave
+      ansible.builtin.shell: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock < /tmp/master.sql
+      changed_when: true
+
+    - name: Configure GTID replication channel
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+      args:
+        stdin: |
+          CHANGE REPLICATION SOURCE TO
+            SOURCE_HOST='{{ mysql_master_ip }}',
+            SOURCE_PORT=3306,
+            SOURCE_USER='{{ mysql_repl_user }}',
+            SOURCE_PASSWORD='{{ mysql_repl_password }}',
+            GET_SOURCE_PUBLIC_KEY=1,
+            SOURCE_AUTO_POSITION=1;
+      changed_when: true
+
+    - name: Start replication
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock -e "START REPLICA;"
+      changed_when: true
+
+    - name: Protect slave from direct writes after replication starts
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+      args:
+        stdin: |
+          SET GLOBAL read_only = ON;
+          SET GLOBAL super_read_only = ON;
+      changed_when: false

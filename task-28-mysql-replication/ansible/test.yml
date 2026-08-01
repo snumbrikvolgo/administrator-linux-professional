@@ -1,0 +1,51 @@
+---
+- name: Exercise MySQL GTID replication
+  hosts: mysql_master
+  become: true
+  tasks:
+    - name: Ensure replication test row exists on master
+      ansible.builtin.command: mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock bet
+      args:
+        stdin: >
+          INSERT INTO bookmaker (id, bookmaker_name)
+          VALUES (1, '1xbet')
+          ON DUPLICATE KEY UPDATE bookmaker_name = VALUES(bookmaker_name);
+      changed_when: true
+
+- name: Verify slave state
+  hosts: mysql_slave
+  become: true
+  tasks:
+    - name: Wait until row is replicated to slave
+      ansible.builtin.command: >
+        mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+        -N -B -D bet -e "SELECT bookmaker_name FROM bookmaker WHERE id = 1;"
+      register: replicated_row
+      changed_when: false
+      until: replicated_row.stdout == '1xbet'
+      retries: 12
+      delay: 5
+
+    - name: Read replica status
+      ansible.builtin.shell: >
+        mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+        -e "SHOW REPLICA STATUS\G" |
+        awk -F': ' '/Replica_IO_Running|Replica_SQL_Running/ {gsub(/[[:space:]]/, "", $1); gsub(/[[:space:]]/, "", $2); print $1 "=" $2}'
+      register: replica_status
+      changed_when: false
+
+    - name: Read tables from bet on slave
+      ansible.builtin.command: >
+        mysql --protocol=socket -uroot -S /var/run/mysqld/mysqld.sock
+        -N -B -D bet -e "SHOW TABLES;"
+      register: slave_tables
+      changed_when: false
+
+    - name: Assert replication is healthy and ignored tables are absent
+      ansible.builtin.assert:
+        that:
+          - "'Replica_IO_Running=Yes' in replica_status.stdout_lines"
+          - "'Replica_SQL_Running=Yes' in replica_status.stdout_lines"
+          - "'events_on_demand' not in slave_tables.stdout_lines"
+          - "'v_same_event' not in slave_tables.stdout_lines"
+          - replicated_row.stdout == '1xbet'
