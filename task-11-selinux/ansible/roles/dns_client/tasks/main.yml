@@ -1,0 +1,13 @@
+---
+- name: Install BIND utilities
+  ansible.builtin.dnf:
+    name: bind-utils
+    state: present
+
+- name: Deploy DNS update key
+  ansible.builtin.copy:
+    src: named.zonetransfer.key
+    dest: /etc/named.zonetransfer.key
+    owner: root
+    group: root
+    mode: "0644"

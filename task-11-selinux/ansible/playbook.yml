@@ -1,0 +1,18 @@
+---
+- name: Configure nginx with SELinux on non-standard port
+  hosts: nginx
+  become: true
+  roles:
+    - nginx_selinux
+
+- name: Configure BIND dynamic DNS with SELinux-safe contexts
+  hosts: dns_servers
+  become: true
+  roles:
+    - dns_server
+
+- name: Configure DNS client tools
+  hosts: dns_clients
+  become: true
+  roles:
+    - dns_client

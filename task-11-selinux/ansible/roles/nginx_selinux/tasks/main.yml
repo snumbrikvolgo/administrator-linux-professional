@@ -1,0 +1,75 @@
+---
+- name: Install nginx and SELinux tools
+  ansible.builtin.dnf:
+    name:
+      - nginx
+      - policycoreutils-python-utils
+      - setroubleshoot-server
+      - checkpolicy
+      - python3-libselinux
+    state: present
+
+- name: Keep SELinux in enforcing mode
+  ansible.builtin.command: setenforce 1
+  changed_when: false
+  failed_when: false
+
+- name: Disable firewalld for the lab
+  ansible.builtin.service:
+    name: firewalld
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Deploy nginx config on port 4881
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable broad SELinux boolean for nginx non-standard port
+  ansible.builtin.command: setsebool -P nis_enabled on
+  when: selinux_nginx_method == "boolean"
+
+- name: Check whether tcp/4881 is already assigned to http_port_t
+  ansible.builtin.shell: "semanage port -l | awk '/^http_port_t[[:space:]]+tcp/ {print}'"
+  register: nginx_http_ports
+  changed_when: false
+  when: selinux_nginx_method == "port"
+
+- name: Allow nginx to bind tcp/4881 by assigning it to http_port_t
+  ansible.builtin.command: semanage port -a -t http_port_t -p tcp 4881
+  when:
+    - selinux_nginx_method == "port"
+    - "'4881' not in nginx_http_ports.stdout"
+
+- name: Deploy local SELinux nginx module source
+  ansible.builtin.template:
+    src: nginx-4881.te.j2
+    dest: /tmp/nginx_4881.te
+    owner: root
+    group: root
+    mode: "0644"
+  when: selinux_nginx_method == "module"
+
+- name: Compile local SELinux nginx module
+  ansible.builtin.command: checkmodule -M -m -o /tmp/nginx_4881.mod /tmp/nginx_4881.te
+  when: selinux_nginx_method == "module"
+  changed_when: false
+
+- name: Package local SELinux nginx module
+  ansible.builtin.command: semodule_package -o /tmp/nginx_4881.pp -m /tmp/nginx_4881.mod
+  when: selinux_nginx_method == "module"
+  changed_when: false
+
+- name: Install local SELinux nginx module
+  ansible.builtin.command: semodule -i /tmp/nginx_4881.pp
+  when: selinux_nginx_method == "module"
+
+- name: Start nginx
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true

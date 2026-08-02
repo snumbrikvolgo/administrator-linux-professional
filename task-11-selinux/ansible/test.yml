@@ -1,0 +1,83 @@
+---
+- name: Test nginx SELinux solution
+  hosts: nginx
+  become: true
+  tasks:
+    - name: Check SELinux is enforcing
+      ansible.builtin.command: getenforce
+      register: nginx_getenforce
+      changed_when: false
+      failed_when: nginx_getenforce.stdout.strip() != "Enforcing"
+
+    - name: Check nis_enabled boolean for setsebool method
+      ansible.builtin.command: getsebool nis_enabled
+      register: nis_enabled_state
+      changed_when: false
+      failed_when: "'--> on' not in nis_enabled_state.stdout"
+      when: selinux_nginx_method == "boolean"
+
+    - name: Check tcp/4881 is labeled http_port_t
+      ansible.builtin.shell: "semanage port -l | awk '/^http_port_t[[:space:]]+tcp/ {print}'"
+      register: http_ports
+      changed_when: false
+      failed_when: "'4881' not in http_ports.stdout"
+      when: selinux_nginx_method == "port"
+
+    - name: Check local SELinux module is installed
+      ansible.builtin.command: semodule -l
+      register: semodule_list
+      changed_when: false
+      failed_when: "'nginx_4881' not in semodule_list.stdout"
+      when: selinux_nginx_method == "module"
+
+    - name: Check nginx responds on port 4881
+      ansible.builtin.uri:
+        url: http://127.0.0.1:4881/
+        return_content: true
+      register: nginx_response
+      failed_when: "'SELinux allows nginx' not in nginx_response.content"
+
+- name: Test DNS SELinux solution
+  hosts: dns_servers
+  become: true
+  tasks:
+    - name: Check SELinux is enforcing
+      ansible.builtin.command: getenforce
+      register: dns_getenforce
+      changed_when: false
+      failed_when: dns_getenforce.stdout.strip() != "Enforcing"
+
+    - name: Check /etc/named has named_zone_t context
+      ansible.builtin.command: "find /etc/named -maxdepth 2 -printf '%p %Z\\n'"
+      register: named_contexts
+      changed_when: false
+      failed_when: "'named_zone_t' not in named_contexts.stdout"
+
+    - name: Check named is running
+      ansible.builtin.service_facts:
+
+    - name: Assert named service is active
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['named.service'].state == 'running'
+
+- name: Test dynamic DNS update from client
+  hosts: dns_clients
+  become: true
+  tasks:
+    - name: Add record via nsupdate
+      ansible.builtin.shell: |
+        nsupdate -k /etc/named.zonetransfer.key <<'NSUPDATE'
+        server {{ dns_server_ip }}
+        zone ddns.lab
+        update delete www.ddns.lab. A
+        update add www.ddns.lab. 60 A {{ dns_client_ip }}
+        send
+        NSUPDATE
+      changed_when: false
+
+    - name: Resolve updated record
+      ansible.builtin.command: "dig +short @{{ dns_server_ip }} www.ddns.lab A"
+      register: dig_www
+      changed_when: false
+      failed_when: "dns_client_ip not in dig_www.stdout"

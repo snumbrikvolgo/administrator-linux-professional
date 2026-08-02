@@ -1,0 +1,11 @@
+$TTL 3600
+$ORIGIN dns.lab.
+@       IN SOA  ns01.dns.lab. root.dns.lab. (
+                2024072401 ; serial
+                3600       ; refresh
+                600        ; retry
+                86400      ; expire
+                3600 )     ; minimum
+
+        IN NS   ns01.dns.lab.
+ns01    IN A    {{ dns_server_ip }}

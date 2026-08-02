@@ -1,0 +1,94 @@
+---
+- name: Install BIND and SELinux tools
+  ansible.builtin.dnf:
+    name:
+      - bind
+      - bind-utils
+      - policycoreutils-python-utils
+      - python3-libselinux
+    state: present
+
+- name: Keep SELinux in enforcing mode
+  ansible.builtin.command: setenforce 1
+  changed_when: false
+  failed_when: false
+
+- name: Disable firewalld for the lab
+  ansible.builtin.service:
+    name: firewalld
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Create /etc/named dynamic directory
+  ansible.builtin.file:
+    path: /etc/named/dynamic
+    state: directory
+    owner: root
+    group: named
+    mode: "0770"
+
+- name: Deploy DNS update key
+  ansible.builtin.copy:
+    src: named.zonetransfer.key
+    dest: /etc/named.zonetransfer.key
+    owner: root
+    group: named
+    mode: "0640"
+
+- name: Deploy named configuration
+  ansible.builtin.template:
+    src: named.conf.j2
+    dest: /etc/named.conf
+    owner: root
+    group: named
+    mode: "0640"
+
+- name: Deploy static dns.lab zone
+  ansible.builtin.template:
+    src: named.dns.lab.j2
+    dest: /etc/named/named.dns.lab
+    owner: root
+    group: named
+    mode: "0660"
+
+- name: Deploy dynamic ddns.lab zone
+  ansible.builtin.template:
+    src: named.ddns.lab.j2
+    dest: /etc/named/dynamic/named.ddns.lab
+    owner: root
+    group: named
+    mode: "0660"
+    force: false
+
+- name: Check persistent SELinux context for /etc/named
+  ansible.builtin.shell: "semanage fcontext -l | grep -F '/etc/named(/.*)?' | grep -F named_zone_t"
+  register: named_fcontext
+  changed_when: false
+  failed_when: false
+
+- name: Persist SELinux type for zones stored under /etc/named
+  ansible.builtin.command: semanage fcontext -a -t named_zone_t '/etc/named(/.*)?'
+  when: named_fcontext.rc != 0
+
+- name: Apply persistent SELinux file contexts
+  ansible.builtin.command: restorecon -R /etc/named
+  changed_when: false
+
+- name: Validate named configuration
+  ansible.builtin.command: named-checkconf /etc/named.conf
+  changed_when: false
+
+- name: Validate dns.lab zone
+  ansible.builtin.command: named-checkzone dns.lab /etc/named/named.dns.lab
+  changed_when: false
+
+- name: Validate ddns.lab zone
+  ansible.builtin.command: named-checkzone ddns.lab /etc/named/dynamic/named.ddns.lab
+  changed_when: false
+
+- name: Start named
+  ansible.builtin.service:
+    name: named
+    state: started
+    enabled: true

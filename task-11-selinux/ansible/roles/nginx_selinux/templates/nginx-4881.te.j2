@@ -1,0 +1,11 @@
+module nginx_4881 1.0;
+
+require {
+        type httpd_t;
+        type unreserved_port_t;
+        class tcp_socket name_bind;
+}
+
+# Allow nginx/httpd_t to bind tcp/4881 while the port keeps its default
+# unreserved_port_t label. This demonstrates the local SELinux module method.
+allow httpd_t unreserved_port_t:tcp_socket name_bind;
