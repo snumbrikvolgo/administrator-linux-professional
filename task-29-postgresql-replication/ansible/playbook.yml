@@ -1,0 +1,307 @@
+---
+- name: Install PostgreSQL packages
+  hosts: postgres_servers
+  become: true
+  tasks:
+    - name: Wait for unattended apt jobs to finish
+      ansible.builtin.shell: |
+        set -e
+        while fuser /var/lib/dpkg/lock-frontend \
+                    /var/lib/dpkg/lock \
+                    /var/lib/apt/lists/lock \
+                    /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          sleep 5
+        done
+        dpkg --configure -a
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Install PostgreSQL and helper packages
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - python3-psycopg2
+          - acl
+          - barman-cli
+        state: present
+        update_cache: true
+        lock_timeout: 300
+
+    - name: Render PostgreSQL configuration
+      ansible.builtin.template:
+        src: postgresql.conf.j2
+        dest: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        owner: postgres
+        group: postgres
+        mode: "0644"
+
+    - name: Render pg_hba.conf
+      ansible.builtin.template:
+        src: pg_hba.conf.j2
+        dest: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
+        owner: postgres
+        group: postgres
+        mode: "0640"
+
+- name: Configure primary PostgreSQL server
+  hosts: postgres_master
+  become: true
+  tasks:
+    - name: Start primary PostgreSQL
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted
+        enabled: true
+
+    - name: Create replication user
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ replicator_user }}';"
+      register: replicator_role
+      changed_when: false
+
+    - name: Ensure replication user exists
+      become_user: postgres
+      ansible.builtin.command: psql -c "CREATE USER {{ replicator_user }} WITH REPLICATION ENCRYPTED PASSWORD '{{ replicator_password }}';"
+      when: replicator_role.stdout | trim != '1'
+      changed_when: true
+
+    - name: Ensure replication user password and privileges
+      become_user: postgres
+      ansible.builtin.command: psql -c "ALTER USER {{ replicator_user }} WITH REPLICATION ENCRYPTED PASSWORD '{{ replicator_password }}';"
+      changed_when: true
+
+    - name: Create Barman database user
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ barman_db_user }}';"
+      register: barman_role
+      changed_when: false
+
+    - name: Ensure Barman database user exists
+      become_user: postgres
+      ansible.builtin.command: psql -c "CREATE USER {{ barman_db_user }} WITH SUPERUSER REPLICATION ENCRYPTED PASSWORD '{{ barman_db_password }}';"
+      when: barman_role.stdout | trim != '1'
+      changed_when: true
+
+    - name: Ensure Barman user password and privileges
+      become_user: postgres
+      ansible.builtin.command: psql -c "ALTER USER {{ barman_db_user }} WITH SUPERUSER REPLICATION ENCRYPTED PASSWORD '{{ barman_db_password }}';"
+      changed_when: true
+
+    - name: Create physical replication slot for node2
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT pg_create_physical_replication_slot('node2') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'node2');"
+      changed_when: create_node2_slot.stdout | trim != ''
+      register: create_node2_slot
+
+    - name: Create otus database for backup checks
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT 1 FROM pg_database WHERE datname='otus';"
+      register: otus_db
+      changed_when: false
+
+    - name: Ensure otus database exists
+      become_user: postgres
+      ansible.builtin.command: createdb -E UTF-8 -T template0 otus
+      when: otus_db.stdout | trim != '1'
+      changed_when: true
+
+    - name: Create demo table in otus database
+      become_user: postgres
+      ansible.builtin.command: psql -d otus
+      args:
+        stdin: |
+          CREATE TABLE IF NOT EXISTS test (id int PRIMARY KEY, name varchar(30));
+          INSERT INTO test VALUES (1, 'alex')
+          ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+      changed_when: true
+
+- name: Rebuild standby from primary
+  hosts: postgres_standby
+  become: true
+  tasks:
+    - name: Stop standby PostgreSQL
+      ansible.builtin.service:
+        name: postgresql
+        state: stopped
+
+    - name: Remove old standby data directory
+      ansible.builtin.file:
+        path: "/var/lib/postgresql/{{ postgres_version }}/main"
+        state: absent
+
+    - name: Recreate standby data directory
+      ansible.builtin.file:
+        path: "/var/lib/postgresql/{{ postgres_version }}/main"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0700"
+
+    - name: Copy base backup from primary with replication slot
+      become_user: postgres
+      ansible.builtin.command: >
+        pg_basebackup -h {{ master_ip }} -U {{ replicator_user }}
+        -D /var/lib/postgresql/{{ postgres_version }}/main
+        -R -S node2 -X stream -P
+      environment:
+        PGPASSWORD: "{{ replicator_password }}"
+      changed_when: true
+
+    - name: Render standby PostgreSQL configuration after base backup
+      ansible.builtin.template:
+        src: postgresql.conf.j2
+        dest: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        owner: postgres
+        group: postgres
+        mode: "0644"
+
+    - name: Render standby pg_hba.conf after base backup
+      ansible.builtin.template:
+        src: pg_hba.conf.j2
+        dest: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
+        owner: postgres
+        group: postgres
+        mode: "0640"
+
+    - name: Start standby PostgreSQL
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+
+- name: Configure Barman backup server
+  hosts: barman_server
+  become: true
+  tasks:
+    - name: Wait for unattended apt jobs to finish
+      ansible.builtin.shell: |
+        set -e
+        while fuser /var/lib/dpkg/lock-frontend \
+                    /var/lib/dpkg/lock \
+                    /var/lib/apt/lists/lock \
+                    /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          sleep 5
+        done
+        dpkg --configure -a
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Install Barman packages
+      ansible.builtin.apt:
+        name:
+          - barman
+          - barman-cli
+          - postgresql-client
+          - acl
+        state: present
+        update_cache: true
+        lock_timeout: 300
+
+    - name: Generate SSH key for barman
+      ansible.builtin.user:
+        name: barman
+        shell: /bin/bash
+        generate_ssh_key: true
+        ssh_key_type: rsa
+        ssh_key_bits: 4096
+        force: false
+
+    - name: Copy pgpass for Barman
+      ansible.builtin.template:
+        src: pgpass.j2
+        dest: /var/lib/barman/.pgpass
+        owner: barman
+        group: barman
+        mode: "0600"
+
+    - name: Render barman.conf
+      ansible.builtin.template:
+        src: barman.conf.j2
+        dest: /etc/barman.conf
+        owner: barman
+        group: barman
+        mode: "0644"
+
+    - name: Render node1 backup definition
+      ansible.builtin.template:
+        src: node1.conf.j2
+        dest: /etc/barman.d/node1.conf
+        owner: barman
+        group: barman
+        mode: "0644"
+
+- name: Exchange SSH keys for Barman rsync access
+  hosts: postgres_master
+  become: true
+  tasks:
+    - name: Generate SSH key for postgres
+      ansible.builtin.user:
+        name: postgres
+        generate_ssh_key: true
+        ssh_key_type: rsa
+        ssh_key_bits: 4096
+        force: false
+
+    - name: Read Barman public key
+      ansible.builtin.slurp:
+        src: /var/lib/barman/.ssh/id_rsa.pub
+      delegate_to: barman
+      register: barman_public_key
+
+    - name: Authorize Barman key for postgres
+      ansible.builtin.lineinfile:
+        path: /var/lib/postgresql/.ssh/authorized_keys
+        line: "{{ barman_public_key.content | b64decode | trim }}"
+        owner: postgres
+        group: postgres
+        mode: "0600"
+        create: true
+
+    - name: Restart primary after access changes
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted
+
+- name: Create initial Barman backup
+  hosts: barman_server
+  become: true
+  tasks:
+    - name: Check Barman configuration
+      become_user: barman
+      ansible.builtin.command: barman check node1
+      register: barman_check_before_backup
+      changed_when: false
+      failed_when: >
+        barman_check_before_backup.rc != 0 and
+        'minimum redundancy requirements: FAILED' not in barman_check_before_backup.stdout and
+        'backup maximum age: FAILED' not in barman_check_before_backup.stdout
+
+    - name: Run Barman cron to start WAL receiver
+      become_user: barman
+      ansible.builtin.command: barman cron
+      changed_when: true
+
+    - name: Force WAL switch on primary for initial Barman archive
+      become_user: postgres
+      ansible.builtin.command: psql -c "CHECKPOINT; SELECT pg_switch_wal();"
+      delegate_to: node1
+      changed_when: true
+
+    - name: Run Barman cron after WAL switch
+      become_user: barman
+      ansible.builtin.command: barman cron
+      changed_when: true
+
+    - name: Create initial backup if none exists
+      become_user: barman
+      ansible.builtin.shell: |
+        set -e
+        if ! barman list-backup node1 | grep -q '^node1 '; then
+          barman backup node1
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: true

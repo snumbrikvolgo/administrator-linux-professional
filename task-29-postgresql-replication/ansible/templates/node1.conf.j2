@@ -1,0 +1,13 @@
+[node1]
+description = "backup node1"
+ssh_command = ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null postgres@{{ master_ip }}
+conninfo = host={{ master_ip }} user={{ barman_db_user }} port=5432 dbname=postgres
+backup_method = postgres
+streaming_archiver = on
+streaming_conninfo = host={{ master_ip }} user={{ barman_db_user }}
+slot_name = barman
+create_slot = auto
+retention_policy_mode = auto
+retention_policy = RECOVERY WINDOW OF 7 DAYS
+wal_retention_policy = main
+archiver = off

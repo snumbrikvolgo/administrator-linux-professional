@@ -1,0 +1,92 @@
+---
+- name: Exercise PostgreSQL streaming replication
+  hosts: postgres_master
+  become: true
+  tasks:
+    - name: Create replication test database
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT 1 FROM pg_database WHERE datname='otus_test';"
+      register: otus_test_db
+      changed_when: false
+
+    - name: Ensure replication test database exists
+      become_user: postgres
+      ansible.builtin.command: createdb -E UTF-8 -T template0 otus_test
+      when: otus_test_db.stdout | trim != '1'
+      changed_when: true
+
+    - name: Upsert test row on primary
+      become_user: postgres
+      ansible.builtin.command: psql -d otus_test
+      args:
+        stdin: |
+          CREATE TABLE IF NOT EXISTS replication_check (id int PRIMARY KEY, marker text);
+          INSERT INTO replication_check VALUES (1, 'streaming-ok')
+          ON CONFLICT (id) DO UPDATE SET marker = EXCLUDED.marker;
+      changed_when: true
+
+    - name: Read primary replication state
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT application_name, state, sync_state FROM pg_stat_replication;"
+      register: primary_replication
+      changed_when: false
+
+    - name: Read physical replication slots
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT slot_name, slot_type FROM pg_replication_slots ORDER BY slot_name;"
+      register: replication_slots
+      changed_when: false
+
+    - name: Assert primary sees standby and slots
+      ansible.builtin.assert:
+        that:
+          - "'streaming' in primary_replication.stdout"
+          - "'node2|physical' in replication_slots.stdout"
+
+- name: Verify standby receives data
+  hosts: postgres_standby
+  become: true
+  tasks:
+    - name: Wait until test row is visible on standby
+      become_user: postgres
+      ansible.builtin.command: psql -d otus_test -tAc "SELECT marker FROM replication_check WHERE id = 1;"
+      register: standby_row
+      changed_when: false
+      until: standby_row.stdout | trim == 'streaming-ok'
+      retries: 12
+      delay: 5
+
+    - name: Check standby recovery mode
+      become_user: postgres
+      ansible.builtin.command: psql -tAc "SELECT pg_is_in_recovery();"
+      register: standby_recovery
+      changed_when: false
+
+    - name: Assert standby is read-only recovery server
+      ansible.builtin.assert:
+        that:
+          - standby_row.stdout | trim == 'streaming-ok'
+          - standby_recovery.stdout | trim == 't'
+
+- name: Verify Barman backups
+  hosts: barman_server
+  become: true
+  tasks:
+    - name: Run Barman check after backup
+      become_user: barman
+      ansible.builtin.command: barman check node1
+      register: barman_check
+      changed_when: false
+
+    - name: List Barman backups
+      become_user: barman
+      ansible.builtin.command: barman list-backup node1
+      register: barman_backups
+      changed_when: false
+
+    - name: Assert Barman has a valid backup
+      ansible.builtin.assert:
+        that:
+          - "'PostgreSQL: OK' in barman_check.stdout"
+          - "'PostgreSQL streaming: OK' in barman_check.stdout"
+          - "'node1 ' in barman_backups.stdout"
