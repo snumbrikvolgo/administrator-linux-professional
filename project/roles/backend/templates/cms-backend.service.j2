@@ -1,0 +1,18 @@
+[Unit]
+Description=CMS demo backend
+After=network-online.target postgresql.service
+
+[Service]
+Environment=BACKEND_NAME={{ inventory_hostname }}
+Environment=DB_HOST={{ postgres_primary_ip }}
+Environment=DB_NAME={{ cms_db_name }}
+Environment=DB_USER={{ cms_db_user }}
+Environment=DB_PASSWORD={{ cms_db_password }}
+Environment=LOG_PATH={{ backend_log }}
+WorkingDirectory=/opt/cms-backend
+ExecStart=/usr/local/bin/flask --app app run --host=0.0.0.0 --port={{ backend_port }}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

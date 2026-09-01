@@ -1,0 +1,94 @@
+---
+- name: Collect package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Install Nginx and OpenSSL
+  vars:
+    web_packages: [nginx, openssl]
+  ansible.builtin.dnf:
+    name: "{{ web_packages }}"
+    state: present
+    lock_timeout: 300
+  when: web_packages | difference(ansible_facts.packages.keys() | list) | length > 0
+
+- name: Create TLS directory
+  ansible.builtin.file:
+    path: /etc/nginx/tls
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Generate self-signed TLS certificate
+  ansible.builtin.command: >
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650
+    -keyout /etc/nginx/tls/cms.key -out /etc/nginx/tls/cms.crt
+    -subj "/CN={{ cms_domain }}"
+    -addext "subjectAltName=DNS:web,DNS:{{ cms_domain }},IP:{{ web_ip }}"
+  args:
+    creates: /etc/nginx/tls/cms.crt
+  notify: reload nginx
+
+# Optional public-DNS mode; the reproducible lab default is the self-signed cert.
+- name: Install Certbot
+  ansible.builtin.dnf:
+    name: [certbot, python3-certbot-nginx]
+    state: present
+    lock_timeout: 300
+  when:
+    - letsencrypt_enabled
+    - "'certbot' not in ansible_facts.packages"
+
+- name: Request Let's Encrypt certificate
+  ansible.builtin.command: >
+    certbot certonly --nginx --non-interactive --agree-tos
+    -m {{ letsencrypt_email }} -d {{ cms_domain }}
+  args:
+    creates: "/etc/letsencrypt/live/{{ cms_domain }}/fullchain.pem"
+  when: letsencrypt_enabled
+  notify: reload nginx
+
+- name: Copy frontend
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../app/frontend/"
+    dest: /usr/share/nginx/html/
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure Nginx
+  ansible.builtin.template:
+    src: cms.conf.j2
+    dest: /etc/nginx/conf.d/cms.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: Read SELinux boolean for proxying
+  ansible.builtin.command: getsebool httpd_can_network_connect
+  register: web_seboolean
+  changed_when: false
+
+- name: Allow Nginx to connect to the backends
+  ansible.builtin.command: setsebool -P httpd_can_network_connect on
+  when: "'--> on' not in web_seboolean.stdout"
+
+- name: Allow web ports
+  ansible.builtin.command: firewall-cmd --permanent --add-service={{ item }}
+  register: web_firewall
+  changed_when: "'ALREADY_ENABLED' not in web_firewall.stderr"
+  loop:
+    - http
+    - https
+
+- name: Reload firewalld for web rules
+  ansible.builtin.command: firewall-cmd --reload
+  when: web_firewall.changed
+
+- name: Enable Nginx
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true

@@ -1,0 +1,39 @@
+---
+- name: Collect package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Import Elastic GPG key
+  ansible.builtin.rpm_key:
+    state: present
+    key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+- name: Configure Elastic repository
+  ansible.builtin.template:
+    src: elastic.repo.j2
+    dest: /etc/yum.repos.d/elastic.repo
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Filebeat
+  ansible.builtin.dnf:
+    name: "filebeat-{{ elastic_version }}"
+    state: present
+    lock_timeout: 300
+  when: "'filebeat' not in ansible_facts.packages"
+
+- name: Configure Filebeat
+  ansible.builtin.template:
+    src: filebeat.yml.j2
+    dest: /etc/filebeat/filebeat.yml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart filebeat
+
+- name: Enable Filebeat
+  ansible.builtin.service:
+    name: filebeat
+    state: started
+    enabled: true

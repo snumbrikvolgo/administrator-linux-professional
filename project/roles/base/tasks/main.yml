@@ -1,0 +1,96 @@
+---
+# A dnf transaction peaks around 450 MB. On a 768 MB VM that already runs nginx
+# or PostgreSQL the kernel OOM-kills dnf mid-install, which looks like a hung
+# package task. A small swap file removes that failure mode, so it comes first.
+- name: Create swap file
+  ansible.builtin.command: fallocate -l 1G /swapfile
+  args:
+    creates: /swapfile
+
+- name: Restrict swap file
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Enable swap file
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - mkswap /swapfile
+    - swapon /swapfile
+  when: ansible_facts.swaptotal_mb | default(0) == 0
+
+- name: Keep swap after reboot
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: "/swapfile none swap defaults 0 0"
+
+# The background metadata refresh grabs the RPM lock and makes dnf tasks hang.
+- name: Disable background dnf metadata refresh
+  ansible.builtin.systemd:
+    name: dnf-makecache.timer
+    state: stopped
+    enabled: false
+
+- name: Make dnf give up instead of hanging on a slow mirror
+  ansible.builtin.blockinfile:
+    path: /etc/dnf/dnf.conf
+    marker: "# {mark} CMS LAB DNF"
+    block: |
+      timeout=30
+      retries=3
+      max_parallel_downloads=10
+
+- name: Collect package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Install base packages
+  vars:
+    base_packages: [chrony, curl, firewalld, tar, policycoreutils-python-utils]
+  ansible.builtin.dnf:
+    name: "{{ base_packages }}"
+    state: present
+    lock_timeout: 300
+  when: base_packages | difference(ansible_facts.packages.keys() | list) | length > 0
+
+- name: Configure lab hostnames
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} CMS LAB HOSTS"
+    block: |
+      192.168.57.10 web
+      192.168.57.11 app1
+      192.168.57.12 app2
+      192.168.57.13 elk
+
+# Ansible opens many short-lived SSH sessions; the stock LoginGraceTime of 120s
+# keeps dead pre-auth sessions in the MaxStartups queue and later connections
+# then time out during banner exchange. Reverse DNS and GSSAPI only add latency.
+- name: Tune sshd for Ansible runs
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-cms-lab.conf
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      UseDNS no
+      GSSAPIAuthentication no
+      LoginGraceTime 30
+      MaxStartups 30:60:100
+      ClientAliveInterval 30
+      ClientAliveCountMax 3
+  notify: restart sshd
+
+- name: Enable chrony
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: true
+
+- name: Enable firewalld
+  ansible.builtin.service:
+    name: firewalld
+    state: started
+    enabled: true

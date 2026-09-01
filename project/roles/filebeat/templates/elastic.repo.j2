@@ -1,0 +1,8 @@
+[elastic-{{ elastic_version_major }}.x]
+name=Elastic repository for {{ elastic_version_major }}.x packages
+baseurl=https://artifacts.elastic.co/packages/{{ elastic_version_major }}.x/yum
+gpgcheck=1
+gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+enabled=1
+autorefresh=1
+type=rpm-md

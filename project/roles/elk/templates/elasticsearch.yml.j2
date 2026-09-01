@@ -1,0 +1,15 @@
+cluster.name: cms-lab
+node.name: elk
+path.data: /var/lib/elasticsearch
+path.logs: /var/log/elasticsearch
+network.host: 0.0.0.0
+http.port: {{ elasticsearch_http_port }}
+discovery.type: single-node
+
+# Isolated lab: no security, no TLS between components.
+# The RPM installs transport TLS secure settings into the keystore, so the ssl
+# toggles have to be set explicitly or Elasticsearch refuses to boot.
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false

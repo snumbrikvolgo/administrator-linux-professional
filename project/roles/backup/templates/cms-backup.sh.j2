@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Dump {{ cms_db_name }} to {{ backup_dir }}, keep {{ backup_keep_days }} days.
+set -euo pipefail
+dir={{ backup_dir }}
+stamp=$(date +%Y%m%d-%H%M%S)
+tmp="$dir/.cms-$stamp.sql.gz"
+out="$dir/cms-$stamp.sql.gz"
+
+pg_dump --format=plain --clean --if-exists {{ cms_db_name }} | gzip > "$tmp"
+mv "$tmp" "$out"
+find "$dir" -name 'cms-*.sql.gz' -mtime +{{ backup_keep_days }} -delete
+echo "backup written: $out ($(du -h "$out" | cut -f1))"

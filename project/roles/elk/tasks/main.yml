@@ -1,0 +1,130 @@
+---
+- name: Collect package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Import Elastic GPG key
+  ansible.builtin.rpm_key:
+    state: present
+    key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+- name: Configure Elastic repository
+  ansible.builtin.template:
+    src: elastic.repo.j2
+    dest: /etc/yum.repos.d/elastic.repo
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Elasticsearch, Logstash and Kibana
+  vars:
+    elk_packages: [elasticsearch, logstash, kibana]
+  ansible.builtin.dnf:
+    name: "{{ elk_packages | map('regex_replace', '$', '-' ~ elastic_version) | list }}"
+    state: present
+    lock_timeout: 300
+  when: elk_packages | difference(ansible_facts.packages.keys() | list) | length > 0
+
+- name: Set vm.max_map_count
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-elasticsearch.conf
+    mode: "0644"
+    content: |
+      vm.max_map_count = 262144
+  notify: reload sysctl
+
+- name: Limit Elasticsearch heap
+  ansible.builtin.copy:
+    dest: /etc/elasticsearch/jvm.options.d/heap.options
+    owner: root
+    group: elasticsearch
+    mode: "0660"
+    content: |
+      -Xms{{ elasticsearch_heap }}
+      -Xmx{{ elasticsearch_heap }}
+  notify: restart elasticsearch
+
+- name: Limit Logstash heap
+  ansible.builtin.lineinfile:
+    path: /etc/sysconfig/logstash
+    regexp: '^LS_JAVA_OPTS='
+    line: 'LS_JAVA_OPTS="-Xms{{ logstash_heap }} -Xmx{{ logstash_heap }}"'
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart logstash
+
+- name: Configure Elasticsearch
+  ansible.builtin.template:
+    src: elasticsearch.yml.j2
+    dest: /etc/elasticsearch/elasticsearch.yml
+    owner: root
+    group: elasticsearch
+    mode: "0660"
+  notify: restart elasticsearch
+
+- name: Configure Logstash pipeline
+  ansible.builtin.template:
+    src: logstash-cms.conf.j2
+    dest: /etc/logstash/conf.d/cms.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart logstash
+
+- name: Configure Kibana
+  ansible.builtin.template:
+    src: kibana.yml.j2
+    dest: /etc/kibana/kibana.yml
+    owner: root
+    group: kibana
+    mode: "0660"
+  notify: restart kibana
+
+- name: Open ELK ports
+  ansible.builtin.command: firewall-cmd --permanent --add-port={{ item }}/tcp
+  register: elk_firewall
+  changed_when: "'ALREADY_ENABLED' not in elk_firewall.stderr"
+  loop:
+    - "{{ elasticsearch_http_port }}"
+    - "{{ kibana_port }}"
+    - "{{ logstash_beats_port }}"
+
+- name: Reload firewalld for ELK
+  ansible.builtin.command: firewall-cmd --reload
+  when: elk_firewall.changed
+
+- name: Enable Elasticsearch
+  ansible.builtin.service:
+    name: elasticsearch
+    state: started
+    enabled: true
+
+- name: Wait for Elasticsearch to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ elasticsearch_http_port }}/_cluster/health"
+  register: elk_health
+  until: elk_health.status == 200
+  retries: 40
+  delay: 5
+
+- name: Enable Logstash and Kibana
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - logstash
+    - kibana
+
+# Both take minutes to come up; without this the playbook finishes before the
+# stack is usable and a smoke test straight afterwards fails.
+- name: Wait for Logstash and Kibana to listen
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ item }}"
+    timeout: 600
+  loop:
+    - "{{ logstash_beats_port }}"
+    - "{{ kibana_port }}"

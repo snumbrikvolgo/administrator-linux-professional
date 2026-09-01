@@ -1,0 +1,78 @@
+---
+- name: Collect package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Install backend packages
+  vars:
+    backend_packages: [python3, python3-pip]
+  ansible.builtin.dnf:
+    name: "{{ backend_packages }}"
+    state: present
+    lock_timeout: 300
+  when: backend_packages | difference(ansible_facts.packages.keys() | list) | length > 0
+
+- name: Create backend directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /opt/cms-backend
+    - "{{ backend_log | dirname }}"
+
+- name: Copy backend application
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../app/backend/"
+    dest: /opt/cms-backend/
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart backend
+
+- name: Install Python requirements
+  ansible.builtin.pip:
+    requirements: /opt/cms-backend/requirements.txt
+    executable: pip3
+
+- name: Configure backend service
+  ansible.builtin.template:
+    src: cms-backend.service.j2
+    dest: /etc/systemd/system/cms-backend.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart backend
+
+- name: Rotate backend log
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/cms-backend
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {{ backend_log }} {
+          daily
+          rotate 3
+          missingok
+          notifempty
+          copytruncate
+      }
+
+- name: Allow backend port
+  ansible.builtin.command: firewall-cmd --permanent --add-port={{ backend_port }}/tcp
+  register: backend_firewall
+  changed_when: "'ALREADY_ENABLED' not in backend_firewall.stderr"
+
+- name: Reload firewalld for backend
+  ansible.builtin.command: firewall-cmd --reload
+  when: backend_firewall.changed
+
+- name: Enable backend
+  ansible.builtin.systemd:
+    name: cms-backend
+    state: started
+    enabled: true
+    daemon_reload: true

@@ -1,0 +1,236 @@
+---
+# Demonstration test. Checks every property the project promises and fails
+# loudly on the first one that does not hold.
+#   ANSIBLE_CONFIG=./ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
+
+- name: CMS, monitoring and ELK checks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../group_vars/all.yml]
+  vars:
+    ansible_become: false
+    web: "https://{{ web_ip }}"
+    elk: "http://{{ elk_ip }}"
+    # /etc/hosts names only exist inside the VMs, so the control node uses IPs.
+    backends:
+      app1: "{{ postgres_primary_ip }}"
+      app2: "{{ postgres_replica_ip }}"
+  tasks:
+    - name: Tag this run
+      ansible.builtin.set_fact:
+        marker: "verify-{{ lookup('pipe', 'date +%s') }}"
+
+    - name: HTTPS frontend answers 200
+      ansible.builtin.uri:
+        url: "{{ web }}/"
+        validate_certs: false
+
+    - name: HTTP is redirected to HTTPS
+      ansible.builtin.uri:
+        url: "http://{{ web_ip }}/"
+        follow_redirects: none
+        status_code: [301]
+      register: redir
+
+    - name: Redirect target is HTTPS
+      ansible.builtin.assert:
+        that: redir.location is defined and redir.location.startswith('https://')
+        fail_msg: "HTTP did not redirect to HTTPS: {{ redir.location | default('no Location header') }}"
+
+    - name: Both backends are healthy and see the database
+      ansible.builtin.uri:
+        url: "http://{{ item.value }}:{{ backend_port }}/api/health"
+      register: health
+      loop: "{{ backends | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Health payload is ok
+      ansible.builtin.assert:
+        that:
+          - item.json.status == 'ok'
+          - item.json.database == 'ok'
+        quiet: true
+      loop: "{{ health.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Nginx load-balances across both backends
+      ansible.builtin.uri:
+        url: "{{ web }}/api/whoami"
+        validate_certs: false
+      register: who
+      loop: "{{ range(0, 12) | list }}"
+      loop_control:
+        label: "sample {{ item }}"
+
+    - name: whoami reached app1 and app2
+      ansible.builtin.assert:
+        that: (who.results | map(attribute='json.backend') | unique | sort) == ['app1', 'app2']
+        fail_msg: "whoami only reached {{ who.results | map(attribute='json.backend') | unique | list }}"
+
+    - name: Create an article through the CMS
+      ansible.builtin.uri:
+        url: "{{ web }}/api/articles"
+        validate_certs: false
+        method: POST
+        body_format: json
+        body:
+          title: "{{ marker }}"
+          body: "created by verify.yml"
+        status_code: [201]
+
+    - name: The article is listed back
+      ansible.builtin.uri:
+        url: "{{ web }}/api/articles"
+        validate_certs: false
+        return_content: true
+      register: articles
+      until: marker in articles.content
+      retries: 5
+      delay: 2
+
+    - name: demo-error returns HTTP 500
+      ansible.builtin.uri:
+        url: "{{ web }}/api/demo-error"
+        validate_certs: false
+        status_code: [500]
+
+    - name: Prometheus has every target up
+      ansible.builtin.uri:
+        url: "{{ elk }}:9090/api/v1/targets?state=active"
+      register: targets
+
+    - name: All Prometheus targets are up (node x4, backend x2, cms)
+      ansible.builtin.assert:
+        that:
+          - targets.json.data.activeTargets | length >= 7
+          - (targets.json.data.activeTargets | map(attribute='health') | unique) == ['up']
+        fail_msg: "target health: {{ targets.json.data.activeTargets | map(attribute='labels.instance') | zip(targets.json.data.activeTargets | map(attribute='health')) | list }}"
+
+    - name: Prometheus loaded the alert rules
+      ansible.builtin.uri:
+        url: "{{ elk }}:9090/api/v1/rules"
+      register: rules
+
+    - name: InstanceDown, BackendDown, CmsDown, HighDiskUsage all present
+      ansible.builtin.assert:
+        that: "['InstanceDown', 'BackendDown', 'CmsDown', 'HighDiskUsage'] | difference(loaded) | length == 0"
+        fail_msg: "loaded rules: {{ loaded }}"
+      vars:
+        loaded: "{{ rules.json.data.groups | map(attribute='rules') | flatten | map(attribute='name') | list }}"
+
+    - name: Grafana is up
+      ansible.builtin.uri:
+        url: "{{ elk }}:3000/api/health"
+
+    - name: Alertmanager is up
+      ansible.builtin.uri:
+        url: "{{ elk }}:9093/-/healthy"
+
+    - name: Elasticsearch cluster is at least yellow
+      ansible.builtin.uri:
+        url: "{{ elk }}:9200/_cluster/health"
+      register: es
+
+    - name: Elasticsearch health is green or yellow
+      ansible.builtin.assert:
+        that: es.json.status in ['green', 'yellow']
+
+    - name: Kibana reports available
+      ansible.builtin.uri:
+        url: "{{ elk }}:5601/api/status"
+      register: kb
+      until: kb.json.status.overall.level == 'available'
+      retries: 30
+      delay: 10
+
+    - name: Logstash beats input is listening
+      ansible.builtin.wait_for:
+        host: "{{ elk_ip }}"
+        port: "{{ logstash_beats_port }}"
+        timeout: 60
+
+    - name: Filebeat shipped both nginx and backend logs
+      ansible.builtin.uri:
+        url: "{{ elk }}:9200/{{ item }}-*/_count"
+      register: counts
+      loop: [cms-nginx, cms-backend]
+
+    - name: Both log indices contain documents
+      ansible.builtin.assert:
+        that: item.json.count > 0
+        fail_msg: "index {{ item.item }}-* is empty - Filebeat/Logstash pipeline broken"
+      loop: "{{ counts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Logstash parsed the nginx access log into fields
+      ansible.builtin.uri:
+        url: "{{ elk }}:9200/cms-nginx-*/_search?size=1&q=status:500"
+      register: parsed
+
+    - name: A status:500 nginx doc exists with method/request/status fields
+      ansible.builtin.assert:
+        that:
+          - parsed.json.hits.hits | length > 0
+          - parsed.json.hits.hits[0]._source.method is defined
+          - parsed.json.hits.hits[0]._source.request is defined
+          - parsed.json.hits.hits[0]._source.status is defined
+        fail_msg: "nginx log is not parsed into separate fields"
+
+- name: PostgreSQL primary checks
+  hosts: db_primary
+  gather_facts: false
+  vars_files: [../group_vars/all.yml]
+  tasks:
+    - name: Primary is not in recovery
+      ansible.builtin.command: psql -tAc "SELECT pg_is_in_recovery()"
+      become_user: postgres
+      changed_when: false
+      register: rec
+      failed_when: (rec.stdout | trim) != 'f'
+
+    - name: A replica is streaming from the primary
+      ansible.builtin.command: psql -tAc "SELECT state FROM pg_stat_replication"
+      become_user: postgres
+      changed_when: false
+      register: stream
+      failed_when: "'streaming' not in stream.stdout"
+
+    - name: Backup timer is enabled
+      ansible.builtin.command: systemctl is-enabled cms-backup.timer
+      changed_when: false
+      register: btimer
+      failed_when: "'enabled' not in btimer.stdout"
+
+    - name: At least one non-empty database dump exists
+      ansible.builtin.find:
+        paths: "{{ backup_dir }}"
+        patterns: "cms-*.sql.gz"
+        size: 1b
+      register: dumps
+      failed_when: dumps.matched == 0
+
+- name: PostgreSQL replica checks
+  hosts: db_replica
+  gather_facts: false
+  vars_files: [../group_vars/all.yml]
+  tasks:
+    - name: Replica is in recovery
+      ansible.builtin.command: psql -tAc "SELECT pg_is_in_recovery()"
+      become_user: postgres
+      changed_when: false
+      register: rec
+      failed_when: (rec.stdout | trim) != 't'
+
+    - name: The article created during the checks replicated here
+      ansible.builtin.command: >
+        psql -tAd {{ cms_db_name }} -c
+        "SELECT count(*) FROM articles WHERE title = '{{ hostvars['localhost'].marker }}'"
+      become_user: postgres
+      changed_when: false
+      register: row
+      failed_when: (row.stdout | trim) != '1'

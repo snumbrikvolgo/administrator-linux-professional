@@ -1,0 +1,48 @@
+---
+cms_db_name: cms
+cms_db_user: cms
+cms_db_password: cms_password
+postgres_replication_user: replicator
+postgres_replication_password: repl_password
+postgres_primary_ip: 192.168.57.11
+postgres_replica_ip: 192.168.57.12
+postgresql_data_dir: /var/lib/pgsql/data
+backup_dir: /var/backups/cms
+backup_keep_days: 7
+
+web_ip: 192.168.57.10
+elk_ip: 192.168.57.13
+lab_network: 192.168.57.0/24
+
+backend_port: 8000
+backend_log: /var/log/cms-backend/app.log
+backend_hosts:
+  - app1
+  - app2
+
+# TLS: self-signed by default, Let's Encrypt only with a public DNS name.
+letsencrypt_enabled: false
+cms_domain: cms.local
+letsencrypt_email: ""
+
+# One pinned Elastic release for elasticsearch/logstash/kibana/filebeat.
+elastic_version: "8.19.20"
+elastic_version_major: "8"
+elasticsearch_http_port: 9200
+elasticsearch_heap: 1536m
+logstash_heap: 512m
+kibana_port: 5601
+logstash_beats_port: 5044
+
+node_exporter_version: 1.8.2
+prometheus_version: 2.54.1
+blackbox_exporter_version: 0.25.0
+alertmanager_version: 0.27.0
+grafana_admin_password: admin
+
+# Alertmanager -> local mailbox on elk via a loopback-only Postfix.
+# No external SMTP, no secrets. Read alerts with `sudo mail` on elk.
+alert_email_enabled: true
+alert_email_to: root@localhost
+alert_email_from: alertmanager@elk
+alert_smtp_smarthost: 127.0.0.1:25

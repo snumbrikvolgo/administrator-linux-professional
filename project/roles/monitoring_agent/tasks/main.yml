@@ -1,0 +1,49 @@
+---
+- name: Create node_exporter user
+  ansible.builtin.user:
+    name: node_exporter
+    shell: /sbin/nologin
+    system: true
+    create_home: false
+
+- name: Install node_exporter archive
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+      - node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
+    creates: /usr/local/bin/node_exporter
+
+- name: Configure node_exporter service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/node_exporter.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Prometheus node exporter
+      After=network-online.target
+      [Service]
+      User=node_exporter
+      ExecStart=/usr/local/bin/node_exporter
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+  notify: restart node_exporter
+
+- name: Allow node_exporter port
+  ansible.builtin.command: firewall-cmd --permanent --add-port=9100/tcp
+  register: node_exporter_firewall
+  changed_when: "'ALREADY_ENABLED' not in node_exporter_firewall.stderr"
+
+- name: Reload firewalld for node_exporter
+  ansible.builtin.command: firewall-cmd --reload
+  when: node_exporter_firewall.changed
+
+- name: Enable node_exporter
+  ansible.builtin.systemd:
+    name: node_exporter
+    state: started
+    enabled: true
+    daemon_reload: true

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CMS demo</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>CMS demo</h1>
+    <section class="editor">
+      <input id="title" placeholder="Title">
+      <textarea id="body" placeholder="Text"></textarea>
+      <button id="create">Create</button>
+    </section>
+    <section>
+      <h2>Articles</h2>
+      <ol id="articles"></ol>
+    </section>
+    <p>Backend: <span id="backend">...</span></p>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

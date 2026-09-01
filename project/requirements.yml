@@ -1,0 +1,5 @@
+---
+# The project deliberately uses only ansible.builtin modules, so no external
+# collections have to be installed. The file is kept so the documented
+# deployment step stays valid.
+collections: []

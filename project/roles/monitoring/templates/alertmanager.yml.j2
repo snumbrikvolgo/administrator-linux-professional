@@ -1,0 +1,18 @@
+{% if alert_email_enabled %}
+global:
+  smtp_smarthost: "{{ alert_smtp_smarthost }}"
+  smtp_from: "{{ alert_email_from }}"
+  smtp_require_tls: false
+{% endif %}
+route:
+  receiver: default
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
+receivers:
+  - name: default
+{% if alert_email_enabled %}
+    email_configs:
+      - to: "{{ alert_email_to }}"
+        send_resolved: true
+{% endif %}

@@ -1,0 +1,43 @@
+---
+# group_vars/ lives in the project root, not next to the inventory or the
+# playbook, so every play loads it explicitly.
+- name: Common configuration and metrics agent
+  hosts: all
+  vars_files: [../group_vars/all.yml]
+  roles:
+    - ../roles/base
+    - ../roles/monitoring_agent
+
+- name: PostgreSQL primary
+  hosts: db_primary
+  vars_files: [../group_vars/all.yml]
+  roles:
+    - ../roles/postgres
+    - ../roles/backup
+
+- name: PostgreSQL replica
+  hosts: db_replica
+  vars_files: [../group_vars/all.yml]
+  roles:
+    - ../roles/postgres
+
+- name: Backend nodes
+  hosts: app
+  vars_files: [../group_vars/all.yml]
+  roles:
+    - ../roles/backend
+    - ../roles/filebeat
+
+- name: Web frontend and reverse proxy
+  hosts: web
+  vars_files: [../group_vars/all.yml]
+  roles:
+    - ../roles/web
+    - ../roles/filebeat
+
+- name: Observability stack
+  hosts: observability
+  vars_files: [../group_vars/all.yml]
+  roles:
+    - ../roles/elk
+    - ../roles/monitoring

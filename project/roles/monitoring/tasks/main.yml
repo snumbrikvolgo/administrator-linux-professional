@@ -1,0 +1,141 @@
+---
+- name: Collect package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Install Grafana repository
+  ansible.builtin.copy:
+    dest: /etc/yum.repos.d/grafana.repo
+    mode: "0644"
+    content: |
+      [grafana]
+      name=grafana
+      baseurl=https://rpm.grafana.com
+      repo_gpgcheck=1
+      enabled=1
+      gpgcheck=1
+      gpgkey=https://rpm.grafana.com/gpg.key
+      sslverify=1
+
+- name: Install monitoring packages
+  vars:
+    monitoring_packages: [grafana, postfix, s-nail]
+  ansible.builtin.dnf:
+    name: "{{ monitoring_packages }}"
+    state: present
+    lock_timeout: 300
+  when: monitoring_packages | difference(ansible_facts.packages.keys() | list) | length > 0
+
+- name: Enable local mail delivery (loopback-only Postfix for Alertmanager)
+  ansible.builtin.service:
+    name: postfix
+    state: started
+    enabled: true
+
+- name: Create Prometheus users
+  ansible.builtin.user:
+    name: "{{ item }}"
+    shell: /sbin/nologin
+    system: true
+    create_home: false
+  loop:
+    - prometheus
+    - alertmanager
+
+- name: Create monitoring directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "0755"
+  loop:
+    - { path: /etc/prometheus, owner: prometheus }
+    - { path: /var/lib/prometheus, owner: prometheus }
+    - { path: /etc/blackbox_exporter, owner: prometheus }
+    - { path: /etc/alertmanager, owner: alertmanager }
+    - { path: /var/lib/alertmanager, owner: alertmanager }
+
+- name: Install Prometheus and Blackbox exporter
+  ansible.builtin.unarchive:
+    src: "{{ item.src }}"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts: "{{ item.extra_opts }}"
+    creates: "/usr/local/bin/{{ item.bin }}"
+  loop:
+    - src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+      bin: prometheus
+      extra_opts: ["--strip-components=1", "prometheus-{{ prometheus_version }}.linux-amd64/prometheus", "prometheus-{{ prometheus_version }}.linux-amd64/promtool"]
+    - src: "https://github.com/prometheus/blackbox_exporter/releases/download/v{{ blackbox_exporter_version }}/blackbox_exporter-{{ blackbox_exporter_version }}.linux-amd64.tar.gz"
+      bin: blackbox_exporter
+      extra_opts: ["--strip-components=1", "blackbox_exporter-{{ blackbox_exporter_version }}.linux-amd64/blackbox_exporter"]
+
+- name: Install Alertmanager
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+      - alertmanager-{{ alertmanager_version }}.linux-amd64/alertmanager
+      - alertmanager-{{ alertmanager_version }}.linux-amd64/amtool
+    creates: /usr/local/bin/alertmanager
+
+- name: Configure monitoring files
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: prometheus.yml.j2, dest: /etc/prometheus/prometheus.yml }
+    - { src: alerts.yml.j2, dest: /etc/prometheus/alerts.yml }
+    - { src: blackbox.yml.j2, dest: /etc/blackbox_exporter/blackbox.yml }
+    - { src: alertmanager.yml.j2, dest: /etc/alertmanager/alertmanager.yml }
+    - { src: prometheus.service.j2, dest: /etc/systemd/system/prometheus.service }
+    - { src: blackbox_exporter.service.j2, dest: /etc/systemd/system/blackbox_exporter.service }
+    - { src: alertmanager.service.j2, dest: /etc/systemd/system/alertmanager.service }
+  notify: restart monitoring
+
+- name: Configure Grafana datasource
+  ansible.builtin.file:
+    path: /etc/grafana/provisioning/datasources
+    state: directory
+    owner: root
+    group: grafana
+    mode: "0750"
+
+- name: Copy Grafana datasource
+  ansible.builtin.template:
+    src: grafana-datasource.yml.j2
+    dest: /etc/grafana/provisioning/datasources/prometheus.yml
+    mode: "0644"
+  notify: restart grafana
+
+- name: Open monitoring ports
+  ansible.builtin.command: firewall-cmd --permanent --add-port={{ item }}/tcp
+  register: monitoring_firewall
+  changed_when: "'ALREADY_ENABLED' not in monitoring_firewall.stderr"
+  loop:
+    - 3000
+    - 9090
+    - 9093
+    - 9115
+
+- name: Reload firewalld for monitoring
+  ansible.builtin.command: firewall-cmd --reload
+  when: monitoring_firewall.changed
+
+- name: Enable monitoring services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - prometheus
+    - blackbox_exporter
+    - alertmanager
+    - grafana-server

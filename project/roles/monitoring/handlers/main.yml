@@ -1,0 +1,15 @@
+---
+- name: restart monitoring
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop:
+    - prometheus
+    - blackbox_exporter
+    - alertmanager
+
+- name: restart grafana
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: restarted

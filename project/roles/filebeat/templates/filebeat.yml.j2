@@ -1,0 +1,22 @@
+filebeat.inputs:
+{% if inventory_hostname in groups.web %}
+  - type: filestream
+    id: cms-nginx
+    paths:
+      - /var/log/nginx/cms_access.log
+      - /var/log/nginx/cms_error.log
+    fields:
+      service: nginx
+    fields_under_root: true
+{% else %}
+  - type: filestream
+    id: cms-backend
+    paths:
+      - {{ backend_log }}
+    fields:
+      service: backend
+    fields_under_root: true
+{% endif %}
+
+output.logstash:
+  hosts: ["{{ elk_ip }}:{{ logstash_beats_port }}"]
