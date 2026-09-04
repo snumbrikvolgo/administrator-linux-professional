@@ -2,39 +2,20 @@
 
 Этот документ оформлен как отчёт о последовательной демонстрации: запуск стенда, проверка всех подсистем, контролируемые отказы и редеплой через «голый» snapshot `preprovisioning` и Ansible.
 
-> Команды остановки VM и восстановления snapshot ниже при подготовке документа не выполнялись. Выполнены только проверки работающей системы и создание скриншотов.
-
 ## URL для просмотра из Windows
 
 Адреса соответствуют `Vagrantfile` и пробросу портов на `127.0.0.1`:
 
-| Компонент | URL в браузере Windows |
-| --- | --- |
-| CMS HTTP / HTTPS | `http://localhost:5666` / `https://localhost:5777` |
-| Prometheus Targets / Alerts | `http://localhost:9090/targets` / `http://localhost:9090/alerts` |
-| Alertmanager | `http://localhost:9093` |
-| Grafana | `http://localhost:3000/d/cms-overview/cms-infrastructure-overview` (автоматический Viewer-вход) |
-| Kibana | `http://localhost:5601` |
-| Elasticsearch API | `http://localhost:9200` |
+| Компонент                   | URL в браузере Windows                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------- |
+| CMS HTTP / HTTPS            | `http://localhost:5666` / `https://localhost:5777`                                              |
+| Prometheus Targets / Alerts | `http://localhost:9090/targets` / `http://localhost:9090/alerts`                                |
+| Alertmanager                | `http://localhost:9093`                                                                         |
+| Grafana                     | `http://localhost:3000/d/cms-overview/cms-infrastructure-overview` (автоматический Viewer-вход) |
+| Kibana                      | `http://localhost:5601`                                                                         |
+| Elasticsearch API           | `http://localhost:9200`                                                                         |
 
 Сертификат CMS самоподписанный, поэтому использовать в командах `curl.exe -k`. Предупреждение браузера подтвердить до начала записи. Адреса `192.168.57.10`–`192.168.57.13` относятся к внутренней сети VM; в браузере Windows их не использовать.
-
-## Организация пространства записи
-
-Разделить запись на четыре самостоятельных видео:
-
-1. `01-working-system.mkv` — полностью рабочая система.
-2. `02-web-redeploy.mkv` — отказ и редеплой `web`.
-3. `03-app-redeploy.mkv` — последовательный отказ `app2`, затем `app1`, восстановление одной и обеих VM.
-4. `04-elk-redeploy.mkv` — отказ и редеплой `elk`.
-
-Организовать на одном виртуальном рабочем столе три зоны: PowerShell слева, WSL справа, браузер в отдельном полноэкранном окне. Увеличить шрифт терминалов, сократить prompt, отключить уведомления Windows, убрать лишние вкладки и секреты. Заранее открыть CMS, Grafana dashboard, Kibana Discover, Prometheus Targets/Alerts и Alertmanager. В OBS записывать весь экран в 1920×1080, 30 FPS, MKV; курсор оставить видимым.
-
-> **Команда оператору MCP/OBS.** Перед каждым видео проверяется имя выходного файла, запускается запись OBS, затем кадр удерживается 2–3 секунды. Новое действие не выполняется, пока предыдущая команда не завершилась и её итог не появился в терминале или браузере. Длительные `ansible-playbook`, `vagrant`, `sleep` и `curl` с timeout не прерываются. После каждой команды заново считывается состояние окна; старые координаты элементов не используются.
->
-> Терминалы захватываются как окна Windows Terminal: отдельная вкладка PowerShell и отдельная вкладка WSL. Браузер захватывается отдельным источником. Переключение сцен OBS выполняется только после появления нужного результата. В отчёт копируется полный текст команды и относящийся к ней вывод без prompt предыдущей команды.
->
-> Если MCP не видит OBS, Windows Terminal или браузер, запись не начинается. Сначала восстанавливается доступ к окнам, затем повторно проверяется кадр. Остановка VM или restore snapshot не запускаются «вслепую».
 
 Использовать путь репозитория `C:\Users\dandy\administrator-linux-professional\project`.
 
@@ -76,6 +57,53 @@ vagrant ssh app2 -c "sudo systemctl is-active cms-backend postgresql filebeat no
 vagrant ssh elk -c "sudo systemctl is-active prometheus alertmanager grafana-server elasticsearch logstash kibana blackbox_exporter node_exporter"
 ```
 
+Фактический вывод `vagrant status` при записи `01-working-system.mkv`:
+
+```text
+Current machine states:
+
+web                       running (virtualbox)
+app1                      running (virtualbox)
+app2                      running (virtualbox)
+elk                       running (virtualbox)
+
+This environment represents multiple VMs. The VMs are all listed
+above with their current state. For more information about a specific
+VM, run `vagrant status NAME`.
+```
+
+Фактические выводы проверок сервисов:
+
+```text
+> vagrant ssh web -c "sudo systemctl is-active nginx filebeat node_exporter"
+active
+active
+active
+
+> vagrant ssh app1 -c "sudo systemctl is-active cms-backend postgresql filebeat node_exporter cms-backup.timer"
+active
+active
+active
+active
+active
+
+> vagrant ssh app2 -c "sudo systemctl is-active cms-backend postgresql filebeat node_exporter"
+active
+active
+active
+active
+
+> vagrant ssh elk -c "sudo systemctl is-active prometheus alertmanager grafana-server elasticsearch logstash kibana blackbox_exporter node_exporter"
+active
+active
+active
+active
+active
+active
+active
+active
+```
+
 ### 2. CMS, API и балансировка
 
 Windows PowerShell:
@@ -88,7 +116,33 @@ curl.exe -k -sS https://localhost:5777/api/health
 curl.exe -k -sS https://localhost:5777/api/articles
 ```
 
-Открыть в браузере `https://localhost:5777`, создать статью, затем несколько раз обновить страницу. Зафиксировать переключение поля `Backend` между `app1` и `app2`.
+Фактические выводы:
+
+```text
+> curl.exe -sS -o NUL -w "HTTP %{http_code}; redirect=%{redirect_url}`n" http://localhost:5666/
+HTTP 301; redirect=https://localhost:5777/
+
+> curl.exe -k -sS -o NUL -w "HTTPS %{http_code}`n" https://localhost:5777/
+HTTPS 200
+
+> 1..8 | ForEach-Object { curl.exe -k -sS https://localhost:5777/api/whoami; "" }
+{"backend":"app2"}
+{"backend":"app1"}
+{"backend":"app2"}
+{"backend":"app1"}
+{"backend":"app2"}
+{"backend":"app1"}
+{"backend":"app2"}
+{"backend":"app1"}
+
+> curl.exe -k -sS https://localhost:5777/api/health
+{"backend":"app2","database":"ok","status":"ok"}
+
+> curl.exe -k -sS https://localhost:5777/api/articles
+[{"body":"created by verify.yml","id":24,"title":"verify-1788521730"},{"body":"created by verify.yml","id":23,"title":"verify-1788521089"},{"body":"generated by generate_logs.yml","id":22,"title":"demo 5"},{"body":"generated by generate_logs.yml","id":21,"title":"demo 4"},{"body":"generated by generate_logs.yml","id":20,"title":"demo 3"},{"body":"generated by generate_logs.yml","id":19,"title":"demo 2"},{"body":"generated by generate_logs.yml","id":18,"title":"demo 1"},{"body":"тест","id":17,"title":"тест"}]
+```
+
+При создании статьи через `https://localhost:5777` и повторных обновлениях страницы поле `Backend` переключается между `app1` и `app2`.
 
 ### 3. БД, репликация и backup
 
@@ -104,6 +158,50 @@ $A1 'sudo systemctl status cms-backup.timer --no-pager'
 $A1 'sudo ls -lh /var/backups/cms/'
 ```
 
+Фактические выводы:
+
+```text
+> $A1 "sudo -u postgres psql -d cms -c 'TABLE articles;'"
+ id |       title       |              body
+----+-------------------+--------------------------------
+ 17 | тест              | тест
+ 18 | demo 1            | generated by generate_logs.yml
+ 19 | demo 2            | generated by generate_logs.yml
+ 20 | demo 3            | generated by generate_logs.yml
+ 21 | demo 4            | generated by generate_logs.yml
+ 22 | demo 5            | generated by generate_logs.yml
+ 23 | verify-1788521089 | created by verify.yml
+ 24 | verify-1788521730 | created by verify.yml
+(24 rows)
+
+> $A1 "sudo -u postgres psql -tAc 'SELECT pg_is_in_recovery();'"
+f
+
+> $A2 "sudo -u postgres psql -tAc 'SELECT pg_is_in_recovery();'"
+t
+
+> $A1 "sudo -u postgres psql -x -c 'SELECT client_addr,state,sync_state FROM pg_stat_replication;'"
+-[ RECORD 1 ]--------------
+client_addr | 192.168.57.12
+state       | streaming
+sync_state  | async
+
+> $A2 "sudo -u postgres psql -d cms -c 'TABLE articles;'"
+На replica возвращены те же 24 строки, включая `17 | тест | тест`.
+
+> $A1 'sudo systemctl status cms-backup.timer --no-pager'
+● cms-backup.timer - Daily cms database backup
+     Loaded: loaded (/etc/systemd/system/cms-backup.timer; enabled; preset: disabled)
+     Active: active (waiting) since Fri 2026-09-04 07:57:51 UTC
+    Trigger: Sat 2026-09-05 00:00:00 UTC
+   Triggers: ● cms-backup.service
+
+> $A1 'sudo ls -lh /var/backups/cms/'
+total 8.0K
+-rw-r--r--. 1 postgres postgres 875 Sep  3 19:00 cms-20260903-190034.sql.gz
+-rw-r--r--. 1 postgres postgres 873 Sep  4 07:39 cms-20260904-073935.sql.gz
+```
+
 ### 4. Мониторинг и алерты в норме
 
 Windows PowerShell:
@@ -115,7 +213,25 @@ curl.exe -sS http://localhost:9093/api/v2/alerts
 curl.exe -sS http://localhost:3000/api/health
 ```
 
-В браузере зафиксировать следующие результаты:
+Фактические выводы monitoring API:
+
+```text
+> curl.exe -sS http://localhost:9090/api/v1/targets?state=active
+{"status":"success","data":{"activeTargets":[{"labels":{"instance":"http://app1:8000/api/health","job":"backend"},"lastError":"","health":"up"},{"labels":{"instance":"http://app2:8000/api/health","job":"backend"},"lastError":"","health":"up"},{"labels":{"instance":"https://192.168.57.10/","job":"cms"},"lastError":"","health":"up"},{"labels":{"instance":"web:9100","job":"node"},"lastError":"","health":"up"},{"labels":{"instance":"app1:9100","job":"node"},"lastError":"","health":"up"},{"labels":{"instance":"app2:9100","job":"node"},"lastError":"","health":"up"},{"labels":{"instance":"elk:9100","job":"node"},"lastError":"","health":"up"}],"droppedTargets":[]}}
+
+> curl.exe -sS http://localhost:9090/api/v1/alerts
+{"status":"success","data":{"alerts":[]}}
+
+> curl.exe -sS http://localhost:9093/api/v2/alerts
+[]
+
+> curl.exe -sS http://localhost:3000/api/health
+{
+  "database": "ok"
+}
+```
+
+Ожидаемые результаты в браузере:
 
 1. Prometheus Targets: `backend (2/2 up)`, `cms (1/1 up)`, `node (4/4 up)`.
 2. Prometheus Alerts: `InstanceDown`, `BackendDown`, `CmsDown`, `HighDiskUsage` не firing.
@@ -136,7 +252,100 @@ $W 'sudo tail -n 10 /var/log/nginx/cms_access.log'
 $W 'sudo tail -n 10 /var/log/nginx/cms_error.log'
 ```
 
-В Kibana открыть Discover → data view `CMS logs` (`cms-*`). Зафиксировать свежие документы, гистограмму поступления событий и разобранные Logstash поля `service`, `backend`, `method`, `request`, `status`. Применить фильтры `service: nginx`, `service: backend`, `status >= 500`.
+Фактические выводы:
+
+```text
+> ansible-playbook -i inventory/hosts.ini playbooks/generate_logs.yml
+PLAY [Generate demo traffic] ***************************************************
+
+TASK [Browse the site (HTTP 200)] **********************************************
+ok: [web] => (item=/)
+ok: [web] => (item=/api/articles)
+ok: [web] => (item=/api/whoami)
+
+TASK [Create articles (HTTP 201)] **********************************************
+ok: [web] => (item=1)
+ok: [web] => (item=2)
+ok: [web] => (item=3)
+ok: [web] => (item=4)
+ok: [web] => (item=5)
+
+TASK [Missing pages and demo errors (HTTP 404 and 500)] ************************
+ok: [web] => (item=/nonexistent)
+ok: [web] => (item=/api/demo-error)
+
+TASK [Summary] *****************************************************************
+ok: [web] => {
+    "msg": "Generated GET / , GET/POST /api/articles, 404 /nonexistent and 500 /api/demo-error"
+}
+
+PLAY RECAP *********************************************************************
+web                        : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+> curl -s 'http://localhost:9200/_cat/indices/cms-*?v'
+health status index                  pri rep docs.count docs.deleted store.size
+yellow open   cms-nginx-2026.09.04     1   1       1475            0      1.4mb
+yellow open   cms-backend-2026.09.03   1   1        851            0    797.7kb
+yellow open   cms-nginx-2026.09.03     1   1        219            0      659kb
+yellow open   cms-backend-2026.09.04   1   1       4369            0      1.4mb
+
+> curl -s 'http://localhost:9200/cms-nginx-*/_count?pretty'
+{
+  "count" : 4338,
+  "_shards" : { "total" : 2, "successful" : 2, "skipped" : 0, "failed" : 0 }
+}
+
+> curl -s 'http://localhost:9200/cms-backend-*/_count?pretty'
+{
+  "count" : 14782,
+  "_shards" : { "total" : 2, "successful" : 2, "skipped" : 0, "failed" : 0 }
+}
+
+> curl -s -H 'Content-Type: application/json' 'http://localhost:9200/cms-nginx-*/_search?pretty' -d '{"size":5,"sort":[{"@timestamp":"desc"}],"query":{"range":{"status":{"gte":500}}}}'
+{
+  "took" : 9,
+  "timed_out" : false,
+  "hits" : {
+    "total" : { "value" : 21, "relation" : "eq" },
+    "hits" : [
+      {
+        "_index" : "cms-nginx-2026.09.04",
+        "_source" : {
+          "service" : "nginx",
+          "method" : "GET",
+          "request" : "/api/demo-error",
+          "status" : 500
+        }
+      }
+    ]
+  }
+}
+
+> $W 'sudo tail -n 10 /var/log/nginx/cms_access.log'
+192.168.57.10 - - [04/Sep/2026:11:48:16 +0000] "GET /api/demo-error HTTP/1.1" 500 17 "-" "ansible-httpget"
+192.168.57.10 - - [04/Sep/2026:11:48:17 +0000] "GET /nonexistent HTTP/1.1" 404 153 "-" "ansible-httpget"
+192.168.57.10 - - [04/Sep/2026:11:48:18 +0000] "GET /api/demo-error HTTP/1.1" 500 17 "-" "ansible-httpget"
+192.168.57.13 - - [04/Sep/2026:11:48:19 +0000] "GET / HTTP/1.1" 200 658 "-" "Blackbox Exporter/0.25.0"
+192.168.57.10 - - [04/Sep/2026:11:48:19 +0000] "GET /nonexistent HTTP/1.1" 404 153 "-" "ansible-httpget"
+192.168.57.10 - - [04/Sep/2026:11:48:19 +0000] "GET /api/demo-error HTTP/1.1" 500 17 "-" "ansible-httpget"
+192.168.57.10 - - [04/Sep/2026:11:48:20 +0000] "GET /nonexistent HTTP/1.1" 404 153 "-" "ansible-httpget"
+192.168.57.10 - - [04/Sep/2026:11:48:21 +0000] "GET /api/demo-error HTTP/1.1" 500 17 "-" "ansible-httpget"
+192.168.57.10 - - [04/Sep/2026:11:48:22 +0000] "GET /nonexistent HTTP/1.1" 404 153 "-" "ansible-httpget"
+192.168.57.10 - - [04/Sep/2026:11:48:23 +0000] "GET /api/demo-error HTTP/1.1" 500 17 "-" "ansible-httpget"
+
+> $W 'sudo tail -n 10 /var/log/nginx/cms_error.log'
+2026/09/03 20:03:04 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/03 20:03:04 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/04 08:03:46 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/04 08:03:46 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/04 09:43:08 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/04 09:43:08 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/04 09:45:55 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/04 10:34:37 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+2026/09/04 10:34:37 [crit] SSL_do_handshake() failed, client: 10.0.2.2
+```
+
+В Kibana Discover для data view `CMS logs` (`cms-*`) доступны свежие документы, гистограмма поступления событий и разобранные Logstash поля `service`, `backend`, `method`, `request`, `status`. Для проверки используются фильтры `service: nginx`, `service: backend`, `status >= 500`.
 
 ### 6. Полная автоматическая проверка
 
@@ -144,7 +353,45 @@ $W 'sudo tail -n 10 /var/log/nginx/cms_error.log'
 ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
 ```
 
-> **Съёмка видео 01.** После `vagrant status` вывод копируется в этот отчёт. После `verify.yml` копируется весь `PLAY RECAP`. Затем MCP переключается на CMS и снимает скриншот, на Prometheus Targets и снимает скриншот, на Grafana dashboard и снимает скриншот, на Kibana Discover и снимает скриншот. Запись OBS останавливается только после последнего скриншота.
+Фактический вывод при записи `01-working-system.mkv` 5 сентября 2026 года:
+
+```text
+TASK [Both backends are healthy and see the database] **************************
+ok: [web] => (item=app1)
+ok: [web] => (item=app2)
+
+TASK [whoami reached app1 and app2] ********************************************
+ok: [web] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [All Prometheus targets are up (node x4, backend x2, cms)] ****************
+ok: [web] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Filebeat shipped both nginx and backend logs] ****************************
+ok: [web] => (item=cms-nginx)
+ok: [web] => (item=cms-backend)
+
+TASK [A replica is streaming from the primary] *********************************
+ok: [app1]
+
+TASK [Replica is in recovery] **************************************************
+ok: [app2]
+
+TASK [The article created during the checks replicated here] *******************
+ok: [app2]
+
+PLAY RECAP *********************************************************************
+app1                       : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+app2                       : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web                        : ok=27   changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+Полные журналы этого дубля сохранены в `.video/logs/01-working-system-generate-logs-retry.log` и `.video/logs/01-working-system-verify-retry.log`. В CMS во время записи вручную созданы статьи `тест 1` и `тест2`; итоговый `verify.yml` также создал и проверил репликацию статьи `verify-*`.
 
 ### Скриншоты рабочего состояния
 
@@ -158,7 +405,7 @@ ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
 
 ## Редеплой web
 
-Перед второй записью открыть CMS, Prometheus Targets/Alerts, Alertmanager, Grafana dashboard и Kibana.
+Контрольные интерфейсы: CMS, Prometheus Targets/Alerts, Alertmanager, Grafana dashboard и Kibana.
 
 ### 1. Остановить web
 
@@ -178,7 +425,7 @@ curl: (7) Failed to connect to localhost port 5777
 000
 ```
 
-### 2. Показать связанные последствия
+### 2. Связанные последствия
 
 Ожидание составляло не менее 75 секунд: `CmsDown` имеет `for: 30s`, `InstanceDown` — `for: 1m`.
 
@@ -204,9 +451,7 @@ Subject: [FIRING:1] CmsDown
 Subject: [FIRING:1] InstanceDown
 ```
 
-В браузере зафиксировать недоступную CMS, красные цели `cms` и `web:9100`, алерты `CmsDown` и `InstanceDown`, группу Alertmanager. В Kibana зафиксировать прекращение новых nginx-логов. БД в этой сцене не проверять.
-
-> **Съёмка видео 02 — момент отказа.** Сразу после `vagrant halt web` в отчёт копируются вывод `vagrant status web` и ошибка `curl`. После 75 секунд копируются JSON активных алертов и темы писем. MCP снимает скриншоты Prometheus Targets, Prometheus Alerts, Alertmanager и Grafana с упавшими значениями. Скриншот ошибки браузера CMS делается только если interstitial не перекрывает страницу.
+Ожидаемое состояние: CMS недоступна, цели `cms` и `web:9100` красные, активны алерты `CmsDown` и `InstanceDown` и группа Alertmanager. В Kibana прекращается поступление новых nginx-логов. БД при этом остаётся вне области отказа.
 
 ### 3. Snapshot и настройка Ansible
 
@@ -224,7 +469,7 @@ WSL:
 ansible-playbook -i inventory/hosts.ini playbooks/site.yml --limit web
 ```
 
-### 4. Показать восстановление тех же сигналов
+### 4. Восстановление тех же сигналов
 
 ```bash
 curl -ksS -o /dev/null -w '%{http_code}\n' https://192.168.57.10/
@@ -236,9 +481,110 @@ ansible-playbook -i inventory/hosts.ini playbooks/generate_logs.yml
 curl -s 'http://localhost:9200/cms-nginx-*/_count?pretty'
 ```
 
-После обновления тех же вкладок зафиксировать доступную CMS, зелёные цели, resolved/inactive алерты и возобновление появления nginx-документов.
+После восстановления CMS доступна, цели зелёные, алерты имеют состояние resolved/inactive, поступление nginx-документов возобновляется.
 
-> **Съёмка видео 02 — восстановление.** Полный `PLAY RECAP` редеплоя копируется после завершения Ansible, затем копируются resolved-письма и результаты повторных `curl`. MCP снимает Grafana после возврата значений `7/1/2/0` и Kibana с возобновившимся потоком логов. После этого запись OBS завершается.
+### Восстановленный журнал фактической записи `02-web-redeploy.mkv`
+
+> PowerShell transcript во время этой попытки не был активен: `Stop-Transcript` завершился с `PSInvalidOperationException`. Блок PowerShell ниже восстановлен из видимого вывода терминала, а блок WSL — из сохранённого пользователем текста. Строки, наложившиеся друг на друга из-за слишком быстрого ввода, сокращены до однозначно читаемых результатов; отсутствующие результаты не реконструировались.
+
+PowerShell — остановка и восстановление `web`:
+
+```text
+PS C:\Users\dandy\administrator-linux-professional\project> vagrant halt web
+==> web: Attempting graceful shutdown of VM...
+
+PS C:\Users\dandy\administrator-linux-professional\project> vagrant status web
+Current machine states:
+
+web                       poweroff (virtualbox)
+
+PS C:\Users\dandy\administrator-linux-professional\project> curl.exe -k -sS --max-time 5 -o NUL -w "%{http_code}`n" https://localhost:5777/
+curl: (7) Failed to connect to localhost:5777 after 2203 ms: Could not connect to server
+000
+
+PS C:\Users\dandy\administrator-linux-professional\project> vagrant snapshot restore web preprovisioning --no-provision
+==> web: Restoring the snapshot 'preprovisioning'...
+==> web: Resuming suspended VM...
+==> web: Booting VM...
+==> web: Waiting for machine to boot. This may take a few minutes...
+    web: SSH address: 127.0.0.1:50001
+    web: SSH username: vagrant
+    web: SSH auth method: private key
+==> web: Machine booted and ready!
+==> web: Machine not provisioned because `--no-provision` is specified.
+
+PS C:\Users\dandy\administrator-linux-professional\project> vagrant status web
+Current machine states:
+
+web                       running (virtualbox)
+
+PS C:\Users\dandy\administrator-linux-professional\project> Stop-Transcript
+Stop-Transcript : Произошла ошибка при остановке транскрибирования: узел в настоящий момент не выполняет транскрибирование.
+FullyQualifiedErrorId : InvalidOperation,Microsoft.PowerShell.Commands.StopTranscriptCommand
+```
+
+WSL — сигналы отказа:
+
+```text
+$ sleep 75
+
+$ curl -s 'http://localhost:9090/api/v1/query?query=probe_success%7Bjob%3D%22cms%22%7D'
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"probe_success","instance":"https://192.168.57.10/","job":"cms"},"value":[1788533392.781,"0"]}]}}
+
+$ curl -s http://localhost:9090/api/v1/alerts
+{"status":"success","data":{"alerts":[
+  {"labels":{"alertname":"InstanceDown","instance":"web:9100","job":"node","severity":"critical"},"annotations":{"summary":"web:9100 is unreachable"},"state":"firing","value":"0e+00"},
+  {"labels":{"alertname":"CmsDown","instance":"https://192.168.57.10/","job":"cms","severity":"critical"},"annotations":{"summary":"CMS is not answering on https://192.168.57.10/"},"state":"firing","value":"0e+00"}
+]}}
+
+$ curl -s http://localhost:9093/api/v2/alerts
+CmsDown: active, receiver=default
+InstanceDown: active, receiver=default
+
+$ $E 'sudo tail -n 80 /var/spool/mail/root'
+alertname = InstanceDown
+instance = web:9100
+job = node
+severity = critical
+summary = web:9100 is unreachable
+Sent by Alertmanager
+```
+
+WSL — Ansible-редеплой:
+
+```text
+$ ./scripts/generate_inventory.sh
+wrote inventory/hosts.ini
+
+$ ansible-playbook -i inventory/hosts.ini playbooks/site.yml --limit web
+...
+TASK [../roles/filebeat : Configure Filebeat]       changed: [web]
+TASK [../roles/filebeat : Enable Filebeat]          changed: [web]
+RUNNING HANDLER [../roles/web : reload nginx]       changed: [web]
+RUNNING HANDLER [../roles/filebeat : restart filebeat]
+changed: [web]
+
+PLAY RECAP
+web : ok=41 changed=34 unreachable=0 failed=0 skipped=2 rescued=0 ignored=0
+```
+
+WSL — проверка восстановления:
+
+```text
+$ curl -ksS -o /dev/null -w '%{http_code}\n' https://192.168.57.10/
+curl: (28) Failed to connect to 192.168.57.10 port 443 after 133963 ms: Connection timed out
+000
+
+$ sleep 75
+
+$ curl -s http://localhost:9090/api/v1/alerts
+{"status":"success","data":{"alerts":[]}}
+
+$ curl -s http://localhost:9093/api/v2/alerts
+[]
+```
+
+> Команды `generate_logs.yml` и Elasticsearch `_count` попали в исходный текст наложенными на вывод почтового сообщения, поэтому их фактические результаты в восстановленный журнал не включены.
 
 ## Редеплой app
 
@@ -279,9 +625,7 @@ BackendDown  instance=http://app2:8000/api/health  state=firing
 InstanceDown instance=app2:9100                      state=firing
 ```
 
-Зафиксировать доступность CMS и БД, значение `Backend: app1` и сообщения мониторинга об отказе `app2` и его backend.
-
-> **Съёмка видео 03 — отказ app2.** В отчёт копируются `vagrant status app2`, серия `whoami`, HTTP-коды, число реплик `0`, активные алерты и темы писем. MCP снимает CMS с `Backend: app1` и Grafana, где healthy backends стало `1`, а firing alerts стало больше нуля. Переход к остановке `app1` выполняется только после сохранения этих материалов.
+Ожидаются доступность CMS и БД, значение `Backend: app1` и сообщения мониторинга об отказе `app2` и его backend.
 
 ### 2. Остановить app1: API и БД недоступны
 
@@ -323,8 +667,6 @@ InstanceDown instance=app2:9100                      state=firing
 
 Статическая страница nginx может отвечать при недоступных API. В отчёт включить коды API, nginx upstream errors, красные backend/node targets и письма.
 
-> **Съёмка видео 03 — отказ обеих VM.** Вывод четырёх `curl`, последние строки `cms_error.log`, алерты и письма копируются в отчёт. MCP снимает ошибку загрузки статей в CMS, Prometheus Targets и красную Grafana. Восстановление `app1` начинается только после завершения этих снимков.
-
 ### 3. Восстановить app1: минимально рабочая система
 
 Windows PowerShell:
@@ -365,9 +707,7 @@ $E 'sudo tail -n 120 /var/spool/mail/root'
 ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
 ```
 
-Зафиксировать возвращение обоих backend в балансировку, состояние PostgreSQL `streaming` и исчезновение тех же алертов.
-
-> **Съёмка видео 03 — восстановление.** После восстановления только `app1` в отчёт копируются HTTP-коды и серия `whoami`, содержащая только `app1`. После восстановления `app2` копируются `pg_stat_replication`, новая серия `whoami` с обоими backend и итоговый `PLAY RECAP`. MCP снимает зелёную Grafana и рабочую CMS, затем запись OBS завершается.
+Ожидаются возвращение обоих backend в балансировку, состояние PostgreSQL `streaming` и исчезновение тех же алертов.
 
 > Для редеплоя без потери БД использовать `vagrant up --no-provision` и повторный Ansible-прогон. При обязательной демонстрации «голого» snapshot `preprovisioning` у `app1` одновременно восстановить `app1` и `app2`, затем выполнить `site.yml --limit app1,app2`: snapshot не содержит рабочую primary-БД, поэтому созданные после него данные теряются.
 
@@ -375,7 +715,7 @@ ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
 
 При остановке `elk` CMS продолжает работать, но одновременно исчезают Prometheus, Alertmanager, Grafana, Elasticsearch, Logstash и Kibana. Внешний алерт или письмо об отказе самого `elk` создать некому — это важно проговорить.
 
-### 1. Зафиксировать время и остановить elk
+### 1. Время начала и остановка elk
 
 WSL:
 
@@ -406,7 +746,7 @@ port=9200 code=000
 curl: (7) Failed to connect to localhost port ...
 ```
 
-### 2. Показать разрыв наблюдаемости
+### 2. Разрыв наблюдаемости
 
 ```bash
 for i in $(seq 1 20); do curl -ksS https://192.168.57.10/ >/dev/null; curl -ksS https://192.168.57.10/api/whoami >/dev/null; done
@@ -416,7 +756,7 @@ $A2 'sudo journalctl -u filebeat --since "5 minutes ago" --no-pager'
 date -Is
 ```
 
-Зафиксировать работающую CMS и недоступные Prometheus, Alertmanager, Grafana и Kibana. Метрики в этот интервал не собираются, поэтому на графиках остаётся пробел. Filebeat может дослать неподтверждённые события после возврата Logstash, поэтому гарантированный пробел относится к метрикам; не утверждать о безвозвратной потере всех логов.
+CMS продолжает работать, а Prometheus, Alertmanager, Grafana и Kibana недоступны. Метрики в этот интервал не собираются, поэтому на графиках остаётся пробел. Filebeat может дослать неподтверждённые события после возврата Logstash, поэтому гарантированный пробел относится к метрикам, но не означает безвозвратную потерю всех логов.
 
 Вывод Filebeat:
 
@@ -425,8 +765,6 @@ Failed to connect to backoff(async(tcp://192.168.57.13:5044))
 connect: no route to host
 publisher pipeline is blocked
 ```
-
-> **Съёмка видео 04 — отказ.** В отчёт копируются время начала отказа, исходный `_count`, `vagrant status elk`, HTTP-код CMS, ошибки всех пяти портов и журнал Filebeat. MCP снимает рабочую CMS и ошибки открытия Prometheus, Grafana и Kibana. Новое действие начинается только после того, как сохранён последний кадр.
 
 ### 3. Snapshot и настройка elk Ansible
 
@@ -446,7 +784,7 @@ ansible-playbook -i inventory/hosts.ini playbooks/site.yml --limit elk
 
 На первичную установку ELK закладывать до 15–20 минут; следующий шаг начинать только после окончания playbook.
 
-### 4. Показать возвращение мониторинга и логов
+### 4. Возвращение мониторинга и логов
 
 ```bash
 for p in 9090 9093 3000 5601 9200; do curl -sS -o /dev/null -w ":$p %{http_code}\n" "http://localhost:$p/"; done
@@ -459,26 +797,4 @@ curl -s 'http://localhost:9200/cms-backend-*/_count?pretty'
 ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
 ```
 
-После обновления Prometheus Targets, Grafana и Kibana зафиксировать зелёные цели, разрыв графика за время простоя и снова появляющиеся свежие логи.
-
-> **Съёмка видео 04 — восстановление.** Полный `PLAY RECAP`, ответы пяти портов, targets и новые значения `_count` копируются в отчёт. MCP снимает Grafana с пробелом в ряду доступности и Kibana Discover с новыми документами после восстановления. Запись OBS завершается после итогового `verify.yml`.
-
-## Финальный кадр
-
-WSL:
-
-```bash
-ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
-```
-
-Windows PowerShell:
-
-```powershell
-vagrant status
-curl.exe -k -sS -o NUL -w "CMS %{http_code}`n" https://localhost:5777/
-curl.exe -sS -o NUL -w "Prometheus %{http_code}`n" http://localhost:9090/-/ready
-curl.exe -sS -o NUL -w "Alertmanager %{http_code}`n" http://localhost:9093/-/healthy
-curl.exe -sS -o NUL -w "Grafana %{http_code}`n" http://localhost:3000/api/health
-curl.exe -sS -o NUL -w "Kibana %{http_code}`n" http://localhost:5601/api/status
-curl.exe -sS -o NUL -w "Elasticsearch %{http_code}`n" http://localhost:9200/_cluster/health
-```
+После восстановления Prometheus Targets показывает зелёные цели, Grafana сохраняет разрыв графика за время простоя, а в Kibana снова появляются свежие логи.

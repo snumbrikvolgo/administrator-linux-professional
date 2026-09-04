@@ -1,5 +1,5 @@
 filebeat.inputs:
-{% if inventory_hostname in groups.web %}
+{% if inventory_hostname in groups.get('frontend', []) %}
   - type: filestream
     id: cms-nginx
     paths:

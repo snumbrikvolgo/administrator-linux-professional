@@ -34,7 +34,7 @@ flowchart LR
 
 В оригинальном стенде `selinux_dns_problems` используются адреса `192.168.50.10` для `ns01` и `192.168.50.15` для `client`. В этом репозитории выбран отдельный диапазон `10.11.0.0/24`, чтобы не конфликтовать с другими домашними заданиями и локальными VirtualBox-сетями.
 
-Ansible запускается из WSL и подключается к VM через forwarded SSH-порты на Windows gateway `172.31.192.1`.
+Ansible запускается из WSL и подключается к VM через forwarded SSH-порты на `127.0.0.1`. В актуальном WSL с mirrored networking Windows localhost доступен напрямую.
 
 | VM | IP | SSH port | Назначение |
 | --- | --- | --- | --- |
@@ -376,23 +376,31 @@ Enforcing
 Из Windows PowerShell:
 
 ```powershell
-cd C:\Users\zazhigina\administrator-linux-professional\task-11-selinux
+cd C:\Users\dandy\administrator-linux-professional\task-11-selinux
 vagrant up
 ```
 
-Из WSL:
+Из WSL сначала нужно скопировать стандартный Vagrant-ключ с Windows-файловой системы. Использовать ключ прямо из `/mnt/c` нельзя: OpenSSH отклоняет его из-за прав DrvFS `0777`.
 
 ```bash
-cd /mnt/c/Users/zazhigina/administrator-linux-professional/task-11-selinux
-ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
-ansible-playbook -i ansible/inventory.ini ansible/test.yml
-```
+mkdir -p ~/.ssh
+cp /mnt/c/Users/dandy/.vagrant.d/insecure_private_key ~/.ssh/task11_vagrant_insecure_key
+chmod 600 ~/.ssh/task11_vagrant_insecure_key
 
-Если параллельное выполнение в WSL идет нестабильно, можно запускать последовательно:
-
-```bash
+cd /mnt/c/Users/dandy/administrator-linux-professional/task-11-selinux
+export ANSIBLE_CONFIG="$PWD/ansible.cfg"
 ansible-playbook -i ansible/inventory.ini ansible/playbook.yml -f 1
 ansible-playbook -i ansible/inventory.ini ansible/test.yml -f 1
+```
+
+`ANSIBLE_CONFIG` задается явно, потому что Ansible игнорирует конфигурационный файл в каталоге `/mnt/c`, который WSL считает доступным на запись всем пользователям. Если ресурсов достаточно, параметр `-f 1` можно убрать.
+
+Проверка HTTP с Windows:
+
+```powershell
+curl.exe http://127.0.0.1:4881/
+curl.exe http://127.0.0.1:4882/
+curl.exe http://127.0.0.1:4883/
 ```
 
 ## Автоматическая проверка
@@ -409,12 +417,23 @@ ansible-playbook -i ansible/inventory.ini ansible/test.yml -f 1
 - клиент успешно добавляет запись через `nsupdate`;
 - `dig @10.11.0.20 www.ddns.lab A` возвращает `10.11.0.21`.
 
-Последний успешный прогон:
+Контрольный прогон 05.09.2026 на Windows/Vagrant 2.4.9, VirtualBox и WSL/Ansible core 2.17.14:
 
 ```text
 ansible-playbook -i ansible/inventory.ini ansible/playbook.yml -f 1
-PLAY RECAP: failed=0, unreachable=0
+client:       ok=3  changed=2  unreachable=0 failed=0
+nginx_bool:  ok=7  changed=4  unreachable=0 failed=0
+nginx_module:ok=10 changed=5  unreachable=0 failed=0
+nginx_port:  ok=8  changed=4  unreachable=0 failed=0
+ns01:        ok=16 changed=8  unreachable=0 failed=0
 
 ansible-playbook -i ansible/inventory.ini ansible/test.yml -f 1
-PLAY RECAP: failed=0, unreachable=0
+client:       ok=3 changed=0 unreachable=0 failed=0
+nginx_bool:  ok=4 changed=0 unreachable=0 failed=0
+nginx_module:ok=4 changed=0 unreachable=0 failed=0
+nginx_port:  ok=4 changed=0 unreachable=0 failed=0
+ns01:        ok=5 changed=0 unreachable=0 failed=0
+
+Windows HTTP: порты 4881, 4882 и 4883 вернули
+`SELinux allows nginx on tcp/4881`.
 ```

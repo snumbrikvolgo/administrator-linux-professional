@@ -31,3 +31,5 @@
 ## [Задание 27: Динамический веб](./task-27-dynamic-web/README.md)
 ## [Задание 28: MySQL. Резервное копирование и репликация](./task-28-mysql-replication/README.md)
 ## [Задание 29: PostgreSQL. Репликация](./task-29-postgresql-replication/README.md)
+
+## [Финальный проект. HA CMS — инфраструктура веб-приложения](./project/README.md)
