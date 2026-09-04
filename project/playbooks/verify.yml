@@ -127,6 +127,11 @@
       ansible.builtin.uri:
         url: "{{ elk }}:3000/api/health"
 
+    - name: Grafana CMS dashboard is available without interactive login
+      ansible.builtin.uri:
+        url: "{{ elk }}:3000/d/cms-overview/cms-infrastructure-overview"
+        status_code: 200
+
     - name: Alertmanager is up
       ansible.builtin.uri:
         url: "{{ elk }}:9093/-/healthy"
@@ -147,6 +152,13 @@
       until: kb.json.status.overall.level == 'available'
       retries: 30
       delay: 10
+
+    - name: Kibana CMS logs data view is provisioned
+      ansible.builtin.uri:
+        url: "{{ elk }}:5601/api/data_views/data_view/cms-logs"
+        headers:
+          kbn-xsrf: verify
+        status_code: 200
 
     - name: Logstash beats input is listening
       ansible.builtin.wait_for:

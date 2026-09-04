@@ -128,3 +128,22 @@
   loop:
     - "{{ logstash_beats_port }}"
     - "{{ kibana_port }}"
+
+- name: Wait for Kibana API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ kibana_port }}/api/status"
+    status_code: 200
+  register: kibana_status
+  until: kibana_status.status == 200
+  retries: 60
+  delay: 5
+
+- name: Provision the CMS logs data view in Kibana
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ kibana_port }}/api/data_views/data_view"
+    method: POST
+    headers:
+      kbn-xsrf: ansible
+    body_format: json
+    body: "{{ lookup('ansible.builtin.file', playbook_dir + '/../docs/kibana-data-view.json') | from_json }}"
+    status_code: 200

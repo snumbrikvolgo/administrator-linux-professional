@@ -1,0 +1,9 @@
+{
+  "data_view": {
+    "id": "cms-logs",
+    "title": "cms-*",
+    "name": "CMS logs",
+    "timeFieldName": "@timestamp"
+  },
+  "override": true
+}

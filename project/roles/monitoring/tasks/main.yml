@@ -114,6 +114,18 @@
     mode: "0644"
   notify: restart grafana
 
+- name: Enable automatic read-only access to Grafana in the isolated lab
+  ansible.builtin.blockinfile:
+    path: /etc/grafana/grafana.ini
+    marker: "; {mark} ANSIBLE MANAGED CMS DEMO LOGIN"
+    block: |
+      [auth.anonymous]
+      enabled = true
+      org_name = Main Org.
+      org_role = Viewer
+      hide_version = true
+  notify: restart grafana
+
 - name: Open monitoring ports
   ansible.builtin.command: firewall-cmd --permanent --add-port={{ item }}/tcp
   register: monitoring_firewall
@@ -139,3 +151,27 @@
     - blackbox_exporter
     - alertmanager
     - grafana-server
+
+- name: Apply Grafana configuration before provisioning the dashboard
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Grafana API
+  ansible.builtin.uri:
+    url: http://127.0.0.1:3000/api/health
+    status_code: 200
+  register: grafana_health
+  until: grafana_health.status == 200
+  retries: 30
+  delay: 2
+
+- name: Provision the CMS overview dashboard
+  ansible.builtin.uri:
+    url: http://127.0.0.1:3000/api/dashboards/db
+    method: POST
+    user: admin
+    password: "{{ grafana_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ lookup('ansible.builtin.file', playbook_dir + '/../docs/grafana-dashboard.json') | from_json }}"
+    status_code: 200
+  no_log: true

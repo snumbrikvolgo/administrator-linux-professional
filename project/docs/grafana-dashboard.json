@@ -1,0 +1,77 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "cms-overview",
+    "title": "CMS infrastructure overview",
+    "tags": ["cms", "demo"],
+    "timezone": "browser",
+    "schemaVersion": 41,
+    "version": 0,
+    "refresh": "5s",
+    "time": {"from": "now-15m", "to": "now"},
+    "panels": [
+      {
+        "id": 1,
+        "type": "stat",
+        "title": "Healthy Prometheus targets",
+        "gridPos": {"h": 7, "w": 6, "x": 0, "y": 0},
+        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "targets": [{"refId": "A", "expr": "sum(up)", "instant": true}],
+        "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 7}]}}, "overrides": []},
+        "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name"}
+      },
+      {
+        "id": 2,
+        "type": "stat",
+        "title": "CMS probe",
+        "gridPos": {"h": 7, "w": 6, "x": 6, "y": 0},
+        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "targets": [{"refId": "A", "expr": "probe_success{job=\"cms\"}", "instant": true}],
+        "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+        "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name"}
+      },
+      {
+        "id": 3,
+        "type": "stat",
+        "title": "Healthy backends",
+        "gridPos": {"h": 7, "w": 6, "x": 12, "y": 0},
+        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "targets": [{"refId": "A", "expr": "sum(probe_success{job=\"backend\"})", "instant": true}],
+        "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 1}, {"color": "green", "value": 2}]}}, "overrides": []},
+        "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name"}
+      },
+      {
+        "id": 4,
+        "type": "stat",
+        "title": "Firing alerts",
+        "gridPos": {"h": 7, "w": 6, "x": 18, "y": 0},
+        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "targets": [{"refId": "A", "expr": "sum(ALERTS{alertstate=\"firing\"}) or vector(0)", "instant": true}],
+        "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+        "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name"}
+      },
+      {
+        "id": 5,
+        "type": "timeseries",
+        "title": "Availability by target",
+        "gridPos": {"h": 9, "w": 12, "x": 0, "y": 7},
+        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "targets": [{"refId": "A", "expr": "up", "legendFormat": "{{job}} — {{instance}}"}, {"refId": "B", "expr": "probe_success", "legendFormat": "probe — {{job}} — {{instance}}"}],
+        "fieldConfig": {"defaults": {"min": 0, "max": 1}, "overrides": []},
+        "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
+      },
+      {
+        "id": 6,
+        "type": "timeseries",
+        "title": "CPU usage by VM",
+        "gridPos": {"h": 9, "w": 12, "x": 12, "y": 7},
+        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "targets": [{"refId": "A", "expr": "100 - avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[2m])) * 100", "legendFormat": "{{instance}}"}],
+        "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+        "options": {"legend": {"displayMode": "table", "placement": "bottom"}}
+      }
+    ]
+  },
+  "folderUid": "",
+  "overwrite": true
+}
