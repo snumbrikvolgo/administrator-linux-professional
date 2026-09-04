@@ -4,8 +4,9 @@
 #   ANSIBLE_CONFIG=./ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/generate_logs.yml
 
 - name: Generate demo traffic
-  hosts: localhost
-  connection: local
+  # Vagrant runs on Windows while Ansible runs in WSL. WSL cannot reliably
+  # route to VirtualBox's host-only network, so originate traffic in the lab.
+  hosts: frontend
   gather_facts: false
   vars_files: [../group_vars/all.yml]
   vars:

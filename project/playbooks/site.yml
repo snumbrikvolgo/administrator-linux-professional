@@ -29,7 +29,7 @@
     - ../roles/filebeat
 
 - name: Web frontend and reverse proxy
-  hosts: web
+  hosts: frontend
   vars_files: [../group_vars/all.yml]
   roles:
     - ../roles/web

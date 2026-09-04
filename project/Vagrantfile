@@ -1,21 +1,33 @@
 MACHINES = {
-  web:  { box_name: "almalinux/9", box_url: "file:///C:/Users/zazhigina/Downloads/alma-9", hostname: "web",  ip: "192.168.57.10", memory: 768,  cpus: 1, mac1: "080027570010", mac2: "080027570110" },
-  app1: { box_name: "almalinux/9", box_url: "file:///C:/Users/zazhigina/Downloads/alma-9", hostname: "app1", ip: "192.168.57.11", memory: 1024, cpus: 1, mac1: "080027570011", mac2: "080027570111" },
-  app2: { box_name: "almalinux/9", box_url: "file:///C:/Users/zazhigina/Downloads/alma-9", hostname: "app2", ip: "192.168.57.12", memory: 1024, cpus: 1, mac1: "080027570012", mac2: "080027570112" },
-  elk:  { box_name: "almalinux/9", box_url: "file:///C:/Users/zazhigina/Downloads/alma-9", hostname: "elk",  ip: "192.168.57.13", memory: 6144, cpus: 2, mac1: "080027570013", mac2: "080027570113" }
+  web:  { box_name: "almalinux/9", hostname: "web",  ip: "192.168.57.10", ssh_port: 50001, memory: 768,  cpus: 1, mac1: "080027570010", mac2: "080027570110" },
+  app1: { box_name: "almalinux/9", hostname: "app1", ip: "192.168.57.11", ssh_port: 50100, memory: 1024, cpus: 1, mac1: "080027570011", mac2: "080027570111" },
+  app2: { box_name: "almalinux/9", hostname: "app2", ip: "192.168.57.12", ssh_port: 50400, memory: 1024, cpus: 1, mac1: "080027570012", mac2: "080027570112" },
+  elk:  { box_name: "almalinux/9", hostname: "elk",  ip: "192.168.57.13", ssh_port: 50500, memory: 6144, cpus: 2, mac1: "080027570013", mac2: "080027570113" }
 }
 
 Vagrant.configure("2") do |config|
+  config.vm.boot_timeout = 0
   config.ssh.insert_key = false
   config.vm.synced_folder ".", "/vagrant", disabled: true
 
   MACHINES.each_with_index do |(name, machine), index|
     config.vm.define name do |node|
       node.vm.box = machine[:box_name]
-      node.vm.box_url = machine[:box_url]
       node.vm.hostname = machine[:hostname]
-      node.vm.network "forwarded_port", id: "ssh", guest: 22, host: 24220 + index, host_ip: "127.0.0.1", auto_correct: false
+      node.vm.network "forwarded_port", id: "ssh", guest: 22, host: machine[:ssh_port], host_ip: "127.0.0.1", auto_correct: false
       node.vm.network "private_network", ip: machine[:ip], auto_config: false
+
+      if name == :web
+        node.vm.network "forwarded_port", id: "http", guest: 80, host: 5666, host_ip: "127.0.0.1", auto_correct: false
+        node.vm.network "forwarded_port", id: "https", guest: 443, host: 5777, host_ip: "127.0.0.1", auto_correct: false
+      elsif name == :elk
+        node.vm.network "forwarded_port", id: "grafana", guest: 3000, host: 3000, host_ip: "127.0.0.1", auto_correct: false
+        node.vm.network "forwarded_port", id: "kibana", guest: 5601, host: 5601, host_ip: "127.0.0.1", auto_correct: false
+        node.vm.network "forwarded_port", id: "prometheus", guest: 9090, host: 9090, host_ip: "127.0.0.1", auto_correct: false
+        node.vm.network "forwarded_port", id: "alertmanager", guest: 9093, host: 9093, host_ip: "127.0.0.1", auto_correct: false
+        node.vm.network "forwarded_port", id: "elasticsearch", guest: 9200, host: 9200, host_ip: "127.0.0.1", auto_correct: false
+      end
+
       node.vm.provision "shell", inline: <<-SHELL
         hostnamectl set-hostname #{machine[:hostname]}
         nmcli con mod "System eth1" ipv4.addresses #{machine[:ip]}/24 ipv4.method manual || nmcli con add type ethernet ifname eth1 con-name "System eth1" ipv4.addresses #{machine[:ip]}/24 ipv4.method manual

@@ -88,14 +88,15 @@ HTTP на `web` редиректит на HTTPS. Backend, PostgreSQL и порт
 Windows PowerShell:
 
 ```powershell
-cd C:\Users\zazhigina\administrator-linux-professional\project
+cd C:\Users\dandy\administrator-linux-professional\project
 vagrant up
 ```
 
 WSL:
 
 ```bash
-cd /mnt/c/Users/zazhigina/administrator-linux-professional/project
+cd /mnt/c/Users/dandy/administrator-linux-professional/project
+export PATH="$HOME/.local/bin:$PATH"
 export ANSIBLE_CONFIG=./ansible.cfg
 ./scripts/generate_inventory.sh
 ansible-playbook -i inventory/hosts.ini playbooks/site.yml
@@ -105,14 +106,35 @@ ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
 
 Inventory и `ANSIBLE_CONFIG` задаются явно: Ansible игнорирует `ansible.cfg` в world-writable каталоге на `/mnt/c`. Критичные SSH-опции продублированы в `inventory/hosts.ini`, так что playbook работает и без `ansible.cfg`.
 
+Развертывание по одному хосту выполняется в порядке зависимостей `app1` -> `app2` -> `web` -> `elk`:
+
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/site.yml --limit app1
+ansible-playbook -i inventory/hosts.ini playbooks/site.yml --limit app2
+ansible-playbook -i inventory/hosts.ini playbooks/site.yml --limit web
+ansible-playbook -i inventory/hosts.ini playbooks/site.yml --limit elk
+```
+
+`app1` должен быть развернут раньше `app2`, потому что replica получает первоначальную копию PostgreSQL с primary. После раздельных запусков выполняются общая проверка и генерация тестовых логов:
+
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/generate_logs.yml
+ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
+```
+
 ## Доступ к сервисам
 
-- **CMS** -- `https://192.168.57.10`. Веб-интерфейс: форма создания статьи, список, кнопки удаления. Внизу строки `Backend: appN` -- какой backend ответил (F5 меняет). Сертификат self-signed, браузер предупредит.
-- **Prometheus** -- `http://192.168.57.13:9090`. Метрики и вычисление алертов. `/targets` -- какие цели живы. `/alerts` -- состояние правил (серый / pending / firing).
-- **Alertmanager** -- `http://192.168.57.13:9093`. Группирует алерты от Prometheus и рассылает уведомления (в этом стенде -- на локальную почту elk).
-- **Grafana** -- `http://192.168.57.13:3000`, `admin` / `admin`. Дашборды и Explore по метрикам. Datasource Prometheus уже подключен через provisioning.
-- **Kibana** -- `http://192.168.57.13:5601`. Просмотр и поиск по логам. Discover, data view `cms-*`.
-- **Elasticsearch** -- `http://192.168.57.13:9200`. Хранилище логов. Индексы `cms-nginx-*` (распарсенный nginx) и `cms-backend-*` (JSON backend).
+Из браузера Windows используются только проброшенные localhost-адреса:
+
+- **CMS HTTP** -- `http://localhost:5666` (перенаправляет на HTTPS).
+- **CMS HTTPS** -- `https://localhost:5777`. Сертификат self-signed, поэтому браузер покажет предупреждение.
+- **Prometheus** -- `http://localhost:9090`; цели: `http://localhost:9090/targets`, алерты: `http://localhost:9090/alerts`.
+- **Alertmanager** -- `http://localhost:9093`.
+- **Grafana** -- `http://localhost:3000`, логин `admin` / `admin`.
+- **Kibana** -- `http://localhost:5601`.
+- **Elasticsearch** -- `http://localhost:9200`.
+
+Адреса `192.168.57.10–13` являются внутренними адресами VM. Они используются сервисами между собой, но для просмотра из Windows не нужны.
 
 ## Проверка
 
@@ -140,7 +162,7 @@ A1='ssh -i ~/.ansible/keys/app1 vagrant@192.168.57.11'
 | `vagrant halt web` | CMS недоступна целиком. `CmsDown` + `InstanceDown web`. | `vagrant up web` + `--limit web` |
 | `vagrant halt elk` | CMS не задета. Prometheus/Grafana/Kibana/ES недоступны -- поломку некому показать. Filebeat копит логи локально. | `vagrant up elk` + `--limit elk` |
 
-Смотреть ошибки: `curl` на CMS, `http://192.168.57.13:9090/alerts`, `http://192.168.57.13:9090/targets`, письма `sudo mail` на elk, nginx `cms_error.log` на web, Kibana Discover (поток логов обрывается).
+Смотреть ошибки: `curl.exe -k https://localhost:5777`, `http://localhost:9090/alerts`, `http://localhost:9090/targets`, письма `sudo mail` на elk, nginx `cms_error.log` на web, Kibana Discover на `http://localhost:5601`.
 
 После восстановления: `verify.yml` -> `failed=0`, алерты снова `Inactive`, приходит письмо `[RESOLVED]`.
 

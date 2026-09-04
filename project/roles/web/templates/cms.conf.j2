@@ -12,7 +12,7 @@ server {
     listen 80;
     server_name _;
     access_log /var/log/nginx/cms_access.log cms;
-    return 301 https://$host$request_uri;
+    return 301 https://$host:{{ external_https_port }}$request_uri;
 }
 
 server {

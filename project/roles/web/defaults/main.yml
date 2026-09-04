@@ -1,0 +1,15 @@
+---
+external_https_port: 5777
+
+web_ip: 192.168.57.10
+cms_db_name: cms
+cms_db_user: cms
+cms_db_password: cms_password
+backend_port: 8000
+backend_hosts:
+  - app1
+  - app2
+
+letsencrypt_enabled: false
+cms_domain: cms.local
+letsencrypt_email: ""

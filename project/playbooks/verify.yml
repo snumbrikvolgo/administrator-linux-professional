@@ -4,8 +4,9 @@
 #   ANSIBLE_CONFIG=./ansible.cfg ansible-playbook -i inventory/hosts.ini playbooks/verify.yml
 
 - name: CMS, monitoring and ELK checks
-  hosts: localhost
-  connection: local
+  # Run network checks inside the lab: VirtualBox's host-only network lives
+  # on Windows and is not necessarily routable from a WSL2 controller.
+  hosts: frontend
   gather_facts: false
   any_errors_fatal: true
   vars_files: [../group_vars/all.yml]
@@ -229,7 +230,7 @@
     - name: The article created during the checks replicated here
       ansible.builtin.command: >
         psql -tAd {{ cms_db_name }} -c
-        "SELECT count(*) FROM articles WHERE title = '{{ hostvars['localhost'].marker }}'"
+        "SELECT count(*) FROM articles WHERE title = '{{ hostvars['web'].marker }}'"
       become_user: postgres
       changed_when: false
       register: row
