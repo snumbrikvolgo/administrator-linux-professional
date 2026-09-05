@@ -393,8 +393,6 @@ ansible-playbook -i ansible/inventory.ini ansible/playbook.yml -f 1
 ansible-playbook -i ansible/inventory.ini ansible/test.yml -f 1
 ```
 
-`ANSIBLE_CONFIG` задается явно, потому что Ansible игнорирует конфигурационный файл в каталоге `/mnt/c`, который WSL считает доступным на запись всем пользователям. Если ресурсов достаточно, параметр `-f 1` можно убрать.
-
 Проверка HTTP с Windows:
 
 ```powershell
@@ -416,8 +414,6 @@ curl.exe http://127.0.0.1:4883/
 - `named` запущен;
 - клиент успешно добавляет запись через `nsupdate`;
 - `dig @10.11.0.20 www.ddns.lab A` возвращает `10.11.0.21`.
-
-Контрольный прогон 05.09.2026 на Windows/Vagrant 2.4.9, VirtualBox и WSL/Ansible core 2.17.14:
 
 ```text
 ansible-playbook -i ansible/inventory.ini ansible/playbook.yml -f 1
